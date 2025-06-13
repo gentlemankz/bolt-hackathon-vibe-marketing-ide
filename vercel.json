@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/sync-facebook-metrics?key=${CRON_SECRET_KEY}",
+      "schedule": "0 * * * *"
+    }
+  ]
+} 
