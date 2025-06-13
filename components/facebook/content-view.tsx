@@ -15,180 +15,131 @@ import Image from "next/image";
 import { useFacebookMetrics, useFacebookMetricsSummary, prefetchMetrics, prefetchMetricsSummary } from "@/lib/hooks/use-facebook-data";
 import { AvatarConstructor } from "@/components/tavus/avatar-constructor";
 
-// ============================================================================
-// TypeScript Interfaces
-// ============================================================================
-
-type SelectedItem = FacebookAdAccount | FacebookCampaign | FacebookAdSet | FacebookAd | LeadNurturingFile | null;
+type SelectedItem = {
+  type: 'account' | 'campaign' | 'adset' | 'ad' | 'lead-nurturing';
+  item: FacebookAdAccount | FacebookCampaign | FacebookAdSet | FacebookAd | LeadNurturingFile;
+  parentId?: string;
+} | null;
 
 interface ContentViewProps {
   selectedItem: SelectedItem;
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
 export function ContentView({ selectedItem }: ContentViewProps) {
   const [activeTab, setActiveTab] = useState("overview");
   const queryClient = useQueryClient();
-
-  // Derive entity type and ID from selected item
-  const entityType = selectedItem ? 
-    'id' in selectedItem && 'ad_account_id' in selectedItem ? 'campaign' :
-    'id' in selectedItem && 'campaign_id' in selectedItem ? 'adset' :
-    'id' in selectedItem && 'ad_set_id' in selectedItem ? 'ad' :
-    'id' in selectedItem && 'account_id' in selectedItem ? 'account' :
-    null : null;
-
-  const entityId = selectedItem && 'id' in selectedItem ? selectedItem.id : null;
-
-  // Data fetching hooks
+  
+  // Get the entity type and ID for metrics queries
+  const entityType = selectedItem?.type === 'account' || selectedItem?.type === 'lead-nurturing' ? null : selectedItem?.type || null;
+  const entityId = selectedItem?.type === 'account' || selectedItem?.type === 'lead-nurturing' ? null : selectedItem?.item.id || null;
+  
+  // Use React Query hooks for metrics data
   const { 
-    data: metricsData, 
-    isLoading: metricsLoading, 
-    refetch: refetchMetrics 
-  } = useFacebookMetrics(entityType, entityId, 30);
-
-  const { 
-    data: metricsSummary, 
-    isLoading: summaryLoading, 
-    refetch: refetchSummary 
-  } = useFacebookMetricsSummary(entityType, entityId, 30);
-
-  // Prefetch data when selectedItem changes
+    data: metrics = [], 
+    isLoading: isLoadingMetrics,
+    refetch: refetchMetrics
+  } = useFacebookMetrics(entityType as 'campaign' | 'adset' | 'ad' | null, entityId, 30);
+  
+  const {
+    data: metricsSummary,
+    isLoading: isLoadingSummary,
+    refetch: refetchSummary
+  } = useFacebookMetricsSummary(entityType as 'campaign' | 'adset' | 'ad' | null, entityId, 30);
+  
+  // Prefetch metrics data when selectedItem changes
   useEffect(() => {
-    if (entityType && entityId) {
-      prefetchMetrics(queryClient, entityType, entityId, 30);
-      prefetchMetricsSummary(queryClient, entityType, entityId, 30);
+    if (selectedItem && selectedItem.type !== 'account' && selectedItem.type !== 'lead-nurturing') {
+      const type = selectedItem.type as 'campaign' | 'adset' | 'ad';
+      const id = selectedItem.item.id;
+      
+      // Prefetch metrics and summary data
+      prefetchMetrics(queryClient, type, id, 30);
+      prefetchMetricsSummary(queryClient, type, id, 30);
     }
-  }, [entityType, entityId, queryClient]);
-
-  // Combined refresh function
-  const refreshMetricsData = async () => {
-    await Promise.all([
-      refetchMetrics(),
-      refetchSummary()
-    ]);
+  }, [selectedItem, queryClient]);
+  
+  // Refresh metrics data
+  const refreshMetricsData = () => {
+    refetchMetrics();
+    refetchSummary();
   };
 
-  // Metrics display components
   const renderMetricsSummary = () => {
-    if (summaryLoading) {
+    if (isLoadingSummary) {
       return (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Card key={i}>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i} className="animate-pulse">
               <CardContent className="p-6">
-                <div className="animate-pulse">
-                  <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                  <div className="h-8 bg-gray-200 rounded w-1/2 mb-2"></div>
-                  <div className="h-3 bg-gray-200 rounded w-2/3"></div>
-                </div>
+                <div className="h-10 bg-muted rounded-md mb-2"></div>
+                <div className="h-6 bg-muted rounded-md w-1/2"></div>
               </CardContent>
             </Card>
           ))}
         </div>
       );
     }
-
+    
     if (!metricsSummary) {
-      return (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[
-            { label: "Impressions", value: "0", icon: BarChart2 },
-            { label: "Clicks", value: "0", icon: MousePointerClick },
-            { label: "Reach", value: "0", icon: Users },
-            { label: "Spend", value: "$0.00", icon: DollarSign }
-          ].map((metric, i) => (
-            <Card key={i}>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">{metric.label}</p>
-                    <p className="text-2xl font-bold">{metric.value}</p>
-                  </div>
-                  <div className="rounded-full bg-primary/10 p-2">
-                    <metric.icon className="h-4 w-4" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      );
+      return null;
     }
-
+    
     return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Impressions</p>
-                <p className="text-2xl font-bold">{metricsSummary.impressions?.toLocaleString() || '0'}</p>
-                <p className="text-sm text-muted-foreground">
-                  CPM: ${metricsSummary.cpm || '0.00'}
-                </p>
+                <p className="text-sm font-medium text-muted-foreground mb-1">Impressions</p>
+                <h3 className="text-2xl font-bold">{metricsSummary.total_impressions.toLocaleString()}</h3>
               </div>
-              <div className="rounded-full bg-primary/10 p-2">
-                <BarChart2 className="h-4 w-4" />
+              <div className="p-2 bg-primary/10 rounded-full">
+                <BarChart2 className="h-5 w-5 text-primary" />
               </div>
             </div>
           </CardContent>
         </Card>
-
+        
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Clicks</p>
-                <p className="text-2xl font-bold">{metricsSummary.clicks?.toLocaleString() || '0'}</p>
-                <p className="text-sm text-muted-foreground">
-                  CPC: ${metricsSummary.cpc || '0.00'}
-                </p>
+                <p className="text-sm font-medium text-muted-foreground mb-1">Clicks</p>
+                <h3 className="text-2xl font-bold">{metricsSummary.total_clicks.toLocaleString()}</h3>
+                <p className="text-sm text-muted-foreground mt-1">CTR: {metricsSummary.total_ctr}%</p>
               </div>
-              <div className="rounded-full bg-primary/10 p-2">
-                <MousePointerClick className="h-4 w-4" />
+              <div className="p-2 bg-primary/10 rounded-full">
+                <MousePointerClick className="h-5 w-5 text-primary" />
               </div>
             </div>
           </CardContent>
         </Card>
-
+        
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Reach</p>
-                <p className="text-2xl font-bold">{metricsSummary.reach?.toLocaleString() || '0'}</p>
-                <p className="text-sm text-muted-foreground">
-                  Frequency: {metricsSummary.frequency?.toFixed(2) || '0.00'}
-                </p>
+                <p className="text-sm font-medium text-muted-foreground mb-1">Reach</p>
+                <h3 className="text-2xl font-bold">{metricsSummary.total_reach.toLocaleString()}</h3>
+                <p className="text-sm text-muted-foreground mt-1">Frequency: {metricsSummary.avg_frequency}</p>
               </div>
-              <div className="rounded-full bg-primary/10 p-2">
-                <Users className="h-4 w-4" />
+              <div className="p-2 bg-primary/10 rounded-full">
+                <Users className="h-5 w-5 text-primary" />
               </div>
             </div>
           </CardContent>
         </Card>
-
+        
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Spend</p>
-                <p className="text-2xl font-bold">
-                  ${parseFloat(metricsSummary.spend || '0').toLocaleString('en-US', { 
-                    minimumFractionDigits: 2, 
-                    maximumFractionDigits: 2 
-                  })}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  CTR: {(metricsSummary.ctr || 0).toFixed(2)}%
-                </p>
+                <p className="text-sm font-medium text-muted-foreground mb-1">Spend</p>
+                <h3 className="text-2xl font-bold">${metricsSummary.total_spend}</h3>
+                <p className="text-sm text-muted-foreground mt-1">CPC: ${metricsSummary.total_cpc}</p>
               </div>
-              <div className="rounded-full bg-primary/10 p-2">
-                <DollarSign className="h-4 w-4" />
+              <div className="p-2 bg-primary/10 rounded-full">
+                <DollarSign className="h-5 w-5 text-primary" />
               </div>
             </div>
           </CardContent>
@@ -198,16 +149,15 @@ export function ContentView({ selectedItem }: ContentViewProps) {
   };
 
   const renderMetricsTable = () => {
-    if (metricsLoading) {
+    if (isLoadingMetrics) {
       return (
-        <div className="flex items-center justify-center py-8">
-          <RefreshCw className="h-6 w-6 animate-spin" />
-          <span className="ml-2">Loading metrics...</span>
+        <div className="flex justify-center items-center p-8">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       );
     }
-
-    if (!metricsData || metricsData.length === 0) {
+    
+    if (!metrics.length) {
       return (
         <Alert>
           <AlertDescription>
@@ -216,12 +166,12 @@ export function ContentView({ selectedItem }: ContentViewProps) {
         </Alert>
       );
     }
-
-    // Sort by date (newest first)
-    const sortedMetrics = [...metricsData].sort((a, b) => 
+    
+    // Sort metrics by date in descending order
+    const sortedMetrics = [...metrics].sort((a, b) => 
       new Date(b.date).getTime() - new Date(a.date).getTime()
     );
-
+    
     return (
       <div className="overflow-x-auto">
         <Table>
@@ -244,17 +194,12 @@ export function ContentView({ selectedItem }: ContentViewProps) {
                 <TableCell>{new Date(metric.date).toLocaleDateString()}</TableCell>
                 <TableCell>{metric.impressions.toLocaleString()}</TableCell>
                 <TableCell>{metric.clicks.toLocaleString()}</TableCell>
-                <TableCell>{metric.ctr.toFixed(2)}%</TableCell>
-                <TableCell>${parseFloat(metric.cpc).toFixed(2)}</TableCell>
-                <TableCell>
-                  ${parseFloat(metric.spend).toLocaleString('en-US', { 
-                    minimumFractionDigits: 2, 
-                    maximumFractionDigits: 2 
-                  })}
-                </TableCell>
+                <TableCell>{(metric.ctr * 100).toFixed(2)}%</TableCell>
+                <TableCell>{metric.cpc === '0' ? '$0.00' : `$${parseFloat(metric.cpc).toFixed(2)}`}</TableCell>
+                <TableCell>{metric.spend === '0' ? '$0.00' : `$${parseFloat(metric.spend).toFixed(2)}`}</TableCell>
                 <TableCell>{metric.reach.toLocaleString()}</TableCell>
                 <TableCell>{metric.frequency.toFixed(2)}</TableCell>
-                <TableCell>{metric.conversions}</TableCell>
+                <TableCell>{metric.conversions.toLocaleString()}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -262,328 +207,205 @@ export function ContentView({ selectedItem }: ContentViewProps) {
       </div>
     );
   };
-
-  const renderMetricsTab = () => (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Performance Metrics</h3>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={refreshMetricsData}
-          disabled={metricsLoading || summaryLoading}
-          className="flex items-center gap-2"
-        >
-          <RefreshCw className={`h-4 w-4 ${(metricsLoading || summaryLoading) ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
-      </div>
-
-      {renderMetricsSummary()}
-      
-      <Card>
-        <CardHeader>
-          <CardTitle>Daily Metrics</CardTitle>
-          <CardDescription>
-            Detailed performance metrics over the last 30 days
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {renderMetricsTable()}
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  // No item selected
+  
   if (!selectedItem) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <h3 className="text-lg font-semibold mb-2">No Item Selected</h3>
-          <p className="text-muted-foreground">
-            Select an account, campaign, ad set, or ad to view details
-          </p>
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center text-muted-foreground">
+          <h3 className="text-lg font-medium mb-2">No Item Selected</h3>
+          <p className="text-sm">Select an item from the sidebar to view details</p>
         </div>
       </div>
     );
   }
 
-  // Render based on item type
-  if ('account_id' in selectedItem) {
-    // Facebook Ad Account
-    const account = selectedItem as FacebookAdAccount;
+  // Common elements for all item types
+  const renderMetricsTab = () => {
     return (
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Ad Account Details</CardTitle>
-              <CardDescription>
-                Information about your Facebook ad account
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-sm font-medium">Account ID</Label>
-                  <p className="text-sm text-muted-foreground font-mono">{account.account_id}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Status</Label>
-                  <p className="text-sm text-muted-foreground">{account.account_status}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Currency</Label>
-                  <p className="text-sm text-muted-foreground">{account.currency}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Amount Spent</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {parseFloat(account.amount_spent).toLocaleString()} {account.currency}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Balance</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {parseFloat(account.balance).toLocaleString()} {account.currency}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Business Location</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {account.business_city}, {account.business_country_code}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      <div>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-medium">Performance Metrics</h3>
+          <Button 
+            size="sm" 
+            variant="outline" 
+            onClick={refreshMetricsData} 
+            disabled={isLoadingMetrics || isLoadingSummary}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${isLoadingMetrics || isLoadingSummary ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
+        
+        {renderMetricsSummary()}
+        {renderMetricsTable()}
+      </div>
     );
-  }
+  };
 
-  if ('ad_account_id' in selectedItem) {
-    // Facebook Campaign
-    const campaign = selectedItem as FacebookCampaign;
-    return (
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="metrics">Metrics</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Campaign Details</CardTitle>
-              <CardDescription>
-                Information about your Facebook campaign
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-sm font-medium">Objective</Label>
-                  <p className="text-sm text-muted-foreground">{campaign.objective}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Status</Label>
-                  <p className="text-sm text-muted-foreground">{campaign.status}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Daily Budget</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {campaign.daily_budget ? `$${parseFloat(campaign.daily_budget).toFixed(2)}` : 'Not set'}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Lifetime Budget</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {campaign.lifetime_budget ? `$${parseFloat(campaign.lifetime_budget).toFixed(2)}` : 'Not set'}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Start Time</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {campaign.start_time ? new Date(campaign.start_time).toLocaleDateString() : 'Not set'}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Stop Time</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {campaign.stop_time ? new Date(campaign.stop_time).toLocaleDateString() : 'Not set'}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="metrics" className="space-y-4">
-          {renderMetricsTab()}
-        </TabsContent>
-      </Tabs>
-    );
-  }
-
-  if ('campaign_id' in selectedItem) {
-    // Facebook Ad Set
-    const adSet = selectedItem as FacebookAdSet;
-    return (
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="metrics">Metrics</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Ad Set Details</CardTitle>
-              <CardDescription>
-                Information about your Facebook ad set
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-sm font-medium">Optimization Goal</Label>
-                  <p className="text-sm text-muted-foreground">{adSet.optimization_goal}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Billing Event</Label>
-                  <p className="text-sm text-muted-foreground">{adSet.billing_event}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Daily Budget</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {adSet.daily_budget ? `$${parseFloat(adSet.daily_budget).toFixed(2)}` : 'Not set'}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Lifetime Budget</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {adSet.lifetime_budget ? `$${parseFloat(adSet.lifetime_budget).toFixed(2)}` : 'Not set'}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Bid Amount</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {adSet.bid_amount ? `$${parseFloat(adSet.bid_amount).toFixed(2)}` : 'Automatic'}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Status</Label>
-                  <p className="text-sm text-muted-foreground">{adSet.status}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="metrics" className="space-y-4">
-          {renderMetricsTab()}
-        </TabsContent>
-      </Tabs>
-    );
-  }
-
-  if ('ad_set_id' in selectedItem) {
-    // Facebook Ad
-    const ad = selectedItem as FacebookAd;
-    return (
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="metrics">Metrics</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Ad Details</CardTitle>
-              <CardDescription>
-                Information about your Facebook ad
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-sm font-medium">Status</Label>
-                  <p className="text-sm text-muted-foreground">{ad.status}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Configured Status</Label>
-                  <p className="text-sm text-muted-foreground">{ad.configured_status}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Bid Amount</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {ad.bid_amount ? `$${parseFloat(ad.bid_amount).toFixed(2)}` : 'Automatic'}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium">Creative Name</Label>
-                  <p className="text-sm text-muted-foreground">{ad.creative?.name || 'No creative'}</p>
-                </div>
-              </div>
-
-              {ad.creative && (
-                <div className="space-y-4">
-                  <div>
-                    <Label className="text-sm font-medium">Creative Preview</Label>
-                    <div className="mt-2 p-4 border rounded-lg">
+  // Simple rendering based on type
+  switch (selectedItem.type) {
+    case 'account':
+      const account = selectedItem.item as FacebookAdAccount;
+      return (
+        <div>
+          <h2 className="text-2xl font-bold mb-4">{account.name}</h2>
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="mb-4">
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+            </TabsList>
+            <TabsContent value="overview">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Account Details</CardTitle>
+                  <CardDescription>ID: {account.account_id}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p>Status: {account.account_status === 1 ? "Active" : "Inactive"}</p>
+                  <p>Currency: {account.currency}</p>
+                  <p>Amount Spent: {account.amount_spent ? `$${account.amount_spent}` : 'N/A'}</p>
+                  <p>Balance: {account.balance ? `$${account.balance}` : 'N/A'}</p>
+                  <p>Country: {account.business_country_code || 'N/A'}</p>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </div>
+      );
+      
+    case 'campaign':
+      const campaign = selectedItem.item as FacebookCampaign;
+      return (
+        <div>
+          <h2 className="text-2xl font-bold mb-4">{campaign.name}</h2>
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="mb-4">
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="metrics">Metrics</TabsTrigger>
+            </TabsList>
+            <TabsContent value="overview">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Campaign Details</CardTitle>
+                  <CardDescription>ID: {campaign.id}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p>Status: {campaign.status}</p>
+                  <p>Objective: {campaign.objective || 'N/A'}</p>
+                  <p>Buying Type: {campaign.buying_type || 'N/A'}</p>
+                  <p>Daily Budget: {campaign.daily_budget ? `$${campaign.daily_budget}` : 'N/A'}</p>
+                  <p>Lifetime Budget: {campaign.lifetime_budget ? `$${campaign.lifetime_budget}` : 'N/A'}</p>
+                  {campaign.start_time && (
+                    <p>Start Date: {new Date(campaign.start_time).toLocaleDateString()}</p>
+                  )}
+                  {campaign.stop_time && (
+                    <p>End Date: {new Date(campaign.stop_time).toLocaleDateString()}</p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="metrics">
+              {renderMetricsTab()}
+            </TabsContent>
+          </Tabs>
+        </div>
+      );
+      
+    case 'adset':
+      const adSet = selectedItem.item as FacebookAdSet;
+      return (
+        <div>
+          <h2 className="text-2xl font-bold mb-4">{adSet.name}</h2>
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="mb-4">
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="metrics">Metrics</TabsTrigger>
+            </TabsList>
+            <TabsContent value="overview">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Ad Set Details</CardTitle>
+                  <CardDescription>ID: {adSet.id}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p>Status: {adSet.status}</p>
+                  <p>Optimization Goal: {adSet.optimization_goal || 'N/A'}</p>
+                  <p>Billing Event: {adSet.billing_event || 'N/A'}</p>
+                  <p>Bid Amount: {adSet.bid_amount ? `$${adSet.bid_amount}` : 'N/A'}</p>
+                  <p>Daily Budget: {adSet.daily_budget ? `$${adSet.daily_budget}` : 'N/A'}</p>
+                  <p>Lifetime Budget: {adSet.lifetime_budget ? `$${adSet.lifetime_budget}` : 'N/A'}</p>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="metrics">
+              {renderMetricsTab()}
+            </TabsContent>
+          </Tabs>
+        </div>
+      );
+      
+    case 'ad':
+      const ad = selectedItem.item as FacebookAd;
+      return (
+        <div>
+          <h2 className="text-2xl font-bold mb-4">{ad.name}</h2>
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="mb-4">
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="metrics">Metrics</TabsTrigger>
+            </TabsList>
+            <TabsContent value="overview">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Ad Details</CardTitle>
+                  <CardDescription>ID: {ad.id}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p>Status: {ad.status}</p>
+                  <p>Bid Amount: {ad.bid_amount ? `$${ad.bid_amount}` : 'N/A'}</p>
+                  {ad.creative && (
+                    <div className="mt-4">
+                      <h3 className="font-medium mb-2">Creative</h3>
+                      {ad.creative.title && <p>Title: {ad.creative.title}</p>}
+                      {ad.creative.body && <p>Body: {ad.creative.body}</p>}
                       {ad.creative.image_url && (
-                        <div className="mb-3">
-                          <Image
-                            src={ad.creative.image_url}
-                            alt={ad.creative.title || 'Ad creative'}
-                            width={300}
-                            height={200}
-                            className="rounded object-contain"
-                          />
+                        <div className="mt-2">
+                          <div className="relative w-full max-w-md h-64">
+                            <Image 
+                              src={ad.creative.image_url} 
+                              alt="Ad Creative"
+                              fill
+                              className="object-contain rounded-md"
+                            />
+                          </div>
                         </div>
                       )}
-                      {ad.creative.title && (
-                        <h4 className="font-semibold mb-2">{ad.creative.title}</h4>
-                      )}
-                      {ad.creative.body && (
-                        <p className="text-sm text-muted-foreground">{ad.creative.body}</p>
-                      )}
                     </div>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="metrics" className="space-y-4">
-          {renderMetricsTab()}
-        </TabsContent>
-      </Tabs>
-    );
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="metrics">
+              {renderMetricsTab()}
+            </TabsContent>
+          </Tabs>
+        </div>
+      );
+      
+    case 'lead-nurturing':
+      return (
+        <div>
+          <AvatarConstructor />
+        </div>
+      );
+      
+    default:
+      return (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center text-muted-foreground">
+            <h3 className="text-lg font-medium mb-2">Unknown Item Type</h3>
+            <p className="text-sm">The selected item type is not recognized</p>
+          </div>
+        </div>
+      );
   }
-
-  if ('type' in selectedItem && selectedItem.type === 'follow-up') {
-    // Lead Nurturing File
-    return <AvatarConstructor />;
-  }
-
-  // Unknown item type
-  return (
-    <div className="flex items-center justify-center h-64">
-      <div className="text-center">
-        <h3 className="text-lg font-semibold mb-2">Unknown Item Type</h3>
-        <p className="text-muted-foreground">
-          Unable to display details for this item type
-        </p>
-      </div>
-    </div>
-  );
-}
+} 
