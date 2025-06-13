@@ -4,10 +4,6 @@ import { ReactNode } from "react";
 import { ChatInterface } from "@/components/ai/chat-interface";
 import { ContextData, TaggedFile } from "@/lib/ai-api-client";
 
-// ============================================================================
-// TypeScript Interfaces
-// ============================================================================
-
 interface DashboardLayoutProps {
   sidebarContent: ReactNode;
   mainContent: ReactNode;
@@ -16,13 +12,13 @@ interface DashboardLayoutProps {
   taggedFiles?: TaggedFile[];
   onTaggedFilesChange?: (files: TaggedFile[]) => void;
   contextSummary?: {
-    accountsCount: number;
-    campaignsCount: number;
-    adsetsCount: number;
-    adsCount: number;
-    currentView: string;
-    timeRange: string;
     description: string;
+    accounts: number;
+    campaigns: number;
+    adSets: number;
+    ads: number;
+    selectedType: string | null;
+    selectedName: string | null;
   };
   getAllMentionableItems?: () => Array<{
     id: string;
@@ -32,13 +28,9 @@ interface DashboardLayoutProps {
   }>;
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
-export function DashboardLayout({
-  sidebarContent,
-  mainContent,
+export function DashboardLayout({ 
+  sidebarContent, 
+  mainContent, 
   isChatOpen,
   context,
   taggedFiles,
@@ -48,34 +40,34 @@ export function DashboardLayout({
 }: DashboardLayoutProps) {
   return (
     <div className="flex h-[calc(100vh-10rem)] border rounded-md overflow-hidden">
-      {/* Left Sidebar */}
-      <div className="w-64 border-r bg-muted/10 flex flex-col">
-        <div className="p-4 border-b">
-          <h2 className="text-lg font-semibold">Facebook Marketing</h2>
-        </div>
-        <div className="flex-1 overflow-y-auto">
+      {/* Left sidebar */}
+      <div className="w-64 bg-muted/40 border-r overflow-y-auto">
+        <div className="p-2">
+          <h3 className="font-medium text-sm mb-2 px-2">Facebook Marketing</h3>
           {sidebarContent}
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 overflow-hidden">
-        {mainContent}
+      {/* Main content area */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="p-4">
+          {mainContent}
+        </div>
       </div>
 
-      {/* Right Chat Panel */}
-      {isChatOpen && (
-        <div className="w-80 border-l bg-background transition-all duration-300 ease-in-out">
+      {/* Right chat panel - togglable */}
+      <div className={`border-l transition-all duration-300 ${isChatOpen ? 'w-80' : 'w-0 border-l-0'}`}>
+        {isChatOpen && (
           <ChatInterface
-            className="h-full"
             context={context}
             taggedFiles={taggedFiles}
             onTaggedFilesChange={onTaggedFilesChange}
             contextSummary={contextSummary}
             getAllMentionableItems={getAllMentionableItems}
+            className="h-full"
           />
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
-}
+} 
