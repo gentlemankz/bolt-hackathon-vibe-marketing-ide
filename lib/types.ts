@@ -1,9 +1,5 @@
 // Meta Marketing API related types
 
-// ============================================================================
-// Facebook/Meta Marketing API Types
-// ============================================================================
-
 export interface FacebookAdAccount {
   id: string;
   name: string;
@@ -37,6 +33,7 @@ export interface FacebookCampaign {
   last_synced_at: string;
 }
 
+// New types for campaign creation
 export interface CampaignCreateRequest {
   name: string;
   objective: string;
@@ -84,7 +81,7 @@ export const CAMPAIGN_OBJECTIVES: CampaignObjective[] = [
     label: 'Awareness',
     description: 'Increase awareness for your brand'
   }
-] as const;
+];
 
 export interface FacebookAdSet {
   id: string;
@@ -132,17 +129,17 @@ export interface FacebookToken {
 export interface FacebookMetrics {
   impressions: number;
   clicks: number;
-  reach: number;
-  conversions: number;
   spend: string;
+  reach: number;
+  frequency: number;
   cpc: string;
   cpm: string;
-  cost_per_result: string;
-  frequency: number;
   ctr: number;
-  unique_ctr: number;
-  conversion_rate: number;
   unique_clicks: number;
+  unique_ctr: number;
+  cost_per_result: string;
+  conversions: number;
+  conversion_rate: number;
 }
 
 export interface FacebookCampaignMetrics extends FacebookMetrics {
@@ -178,9 +175,7 @@ export interface FacebookSyncJob {
   details?: Record<string, unknown>;
 }
 
-// ============================================================================
-// Tavus AI Avatar Types
-// ============================================================================
+// Tavus AI Avatar related types
 
 export interface TavusConnection {
   id: string;
@@ -200,10 +195,10 @@ export interface TavusReplica {
   status: 'training' | 'ready' | 'error' | 'deprecated';
   training_progress: string;
   created_at: string;
-  user_id: string;
   error_message?: string;
-  avatar_url?: string;
+  user_id: string;
   is_stock?: boolean;
+  avatar_url?: string;
 }
 
 export interface TavusPersona {
@@ -222,9 +217,9 @@ export interface TavusVideo {
   download_url?: string;
   stream_url?: string;
   hosted_url?: string;
-  background_url?: string;
   replica_id: string;
   script: string;
+  background_url?: string;
   created_at: string;
   user_id: string;
 }
@@ -241,31 +236,43 @@ export interface TavusStockPersona {
 export interface LeadNurturingFile {
   id: string;
   name: string;
+  type: 'follow-up';
   user_id: string;
   created_at: string;
   updated_at: string;
-  type: 'follow-up';
 }
 
 export interface AvatarCreationRequest {
-  script: string;
-  video_name: string;
   replica_id?: string;
   persona_id?: string;
+  script: string;
+  video_name: string;
   background_url?: string;
   conversational_context?: string;
   custom_greeting?: string;
 }
 
-// ============================================================================
-// Ad Set Creation Types
-// ============================================================================
+// New types for ad set creation
+export interface AdSetCreateRequest {
+  name: string;
+  campaign_id: string;
+  targeting: AdSetTargeting;
+  optimization_goal: string;
+  billing_event: string;
+  bid_amount?: string;
+  bid_strategy?: 'LOWEST_COST_WITHOUT_CAP' | 'LOWEST_COST_WITH_BID_CAP' | 'TARGET_COST';
+  status?: string;
+  daily_budget?: string;
+  lifetime_budget?: string;
+  start_time?: string;
+  end_time?: string;
+}
 
 export interface AdSetTargeting {
   geo_locations: {
     countries: string[];
-    regions?: { key: string }[];
-    cities?: { key: number; radius: number; distance_unit: string }[];
+    regions?: Array<{ key: string }>;
+    cities?: Array<{ key: number; radius: number; distance_unit: string }>;
   };
   age_min?: number;
   age_max?: number;
@@ -273,156 +280,53 @@ export interface AdSetTargeting {
   facebook_positions?: string[];
   publisher_platforms?: string[];
   device_platforms?: string[];
-  behaviors?: { id: number; name: string }[];
-  interests?: { id: number; name: string }[];
-  custom_audiences?: { id: string }[];
-  excluded_custom_audiences?: { id: string }[];
+  behaviors?: Array<{ id: number; name: string }>;
+  interests?: Array<{ id: number; name: string }>;
+  custom_audiences?: Array<{ id: string }>;
+  excluded_custom_audiences?: Array<{ id: string }>;
   targeting_automation?: {
-    advantage_audience: 0 | 1;
+    advantage_audience: 0 | 1; // 0 = disabled, 1 = enabled
   };
 }
 
-export interface AdSetCreateRequest {
-  name: string;
-  campaign_id: string;
-  optimization_goal: string;
-  billing_event: string;
-  targeting: AdSetTargeting;
-  bid_amount?: string;
-  status?: string;
-  daily_budget?: string;
-  lifetime_budget?: string;
-  start_time?: string;
-  end_time?: string;
-  bid_strategy?: 'LOWEST_COST_WITHOUT_CAP' | 'LOWEST_COST_WITH_BID_CAP' | 'TARGET_COST';
-}
-
-// ============================================================================
-// Constants for Ad Sets
-// ============================================================================
-
+// Optimization goals for ad sets
 export const OPTIMIZATION_GOALS = [
-  {
-    value: 'REACH',
-    label: 'Reach',
-    description: 'Show your ads to the maximum number of people',
-    compatibleBillingEvents: ['IMPRESSIONS'] as const
-  },
-  {
-    value: 'IMPRESSIONS',
-    label: 'Impressions',
-    description: 'Get the most impressions for your budget',
-    compatibleBillingEvents: ['IMPRESSIONS'] as const
-  },
-  {
-    value: 'LINK_CLICKS',
-    label: 'Link Clicks',
-    description: 'Drive traffic to your website or app',
-    compatibleBillingEvents: ['LINK_CLICKS', 'IMPRESSIONS'] as const
-  },
-  {
-    value: 'POST_ENGAGEMENT',
-    label: 'Post Engagement',
-    description: 'Get more likes, comments, shares, and other engagement',
-    compatibleBillingEvents: ['POST_ENGAGEMENT', 'IMPRESSIONS'] as const
-  },
-  {
-    value: 'PAGE_LIKES',
-    label: 'Page Likes',
-    description: 'Get more people to like your Facebook Page',
-    compatibleBillingEvents: ['PAGE_LIKES', 'IMPRESSIONS'] as const
-  },
-  {
-    value: 'APP_INSTALLS',
-    label: 'App Installs',
-    description: 'Get more people to install your app',
-    compatibleBillingEvents: ['APP_INSTALLS', 'IMPRESSIONS'] as const
-  },
-  {
-    value: 'LEAD_GENERATION',
-    label: 'Lead Generation',
-    description: 'Collect leads for your business',
-    compatibleBillingEvents: ['IMPRESSIONS'] as const
-  },
-  {
-    value: 'CONVERSIONS',
-    label: 'Conversions',
-    description: 'Get more conversions on your website',
-    compatibleBillingEvents: ['IMPRESSIONS'] as const
-  },
-  {
-    value: 'VIDEO_VIEWS',
-    label: 'Video Views',
-    description: 'Get more people to watch your videos',
-    compatibleBillingEvents: ['VIDEO_VIEWS', 'THRUPLAY', 'IMPRESSIONS'] as const
-  },
-  {
-    value: 'THRUPLAY',
-    label: 'ThruPlay',
-    description: 'Get more people to watch your videos to completion',
-    compatibleBillingEvents: ['THRUPLAY', 'IMPRESSIONS'] as const
-  }
+  { value: 'REACH', label: 'Reach', description: 'Show your ad to as many people as possible', compatibleBillingEvents: ['IMPRESSIONS'] },
+  { value: 'IMPRESSIONS', label: 'Impressions', description: 'Get the most impressions for your budget', compatibleBillingEvents: ['IMPRESSIONS'] },
+  { value: 'LINK_CLICKS', label: 'Link Clicks', description: 'Get more people to click links to your website', compatibleBillingEvents: ['LINK_CLICKS', 'IMPRESSIONS'] },
+  { value: 'POST_ENGAGEMENT', label: 'Post Engagement', description: 'Get more likes, comments, and shares', compatibleBillingEvents: ['IMPRESSIONS'] },
+  { value: 'PAGE_LIKES', label: 'Page Likes', description: 'Get more people to like your page', compatibleBillingEvents: ['IMPRESSIONS'] },
+  { value: 'APP_INSTALLS', label: 'App Installs', description: 'Get more people to install your app', compatibleBillingEvents: ['IMPRESSIONS'] },
+  { value: 'LEAD_GENERATION', label: 'Lead Generation', description: 'Collect leads for your business', compatibleBillingEvents: ['IMPRESSIONS'] },
+  { value: 'CONVERSIONS', label: 'Conversions', description: 'Get more conversions on your website', compatibleBillingEvents: ['IMPRESSIONS'] },
+  { value: 'VIDEO_VIEWS', label: 'Video Views', description: 'Get more people to watch your videos', compatibleBillingEvents: ['IMPRESSIONS', 'VIDEO_VIEWS'] },
+  { value: 'THRUPLAY', label: 'ThruPlay', description: 'Get more people to watch your videos to completion', compatibleBillingEvents: ['IMPRESSIONS', 'THRUPLAY'] },
 ] as const;
 
+// Billing events for ad sets
 export const BILLING_EVENTS = [
-  {
-    value: 'IMPRESSIONS',
-    label: 'Impressions',
-    description: 'Pay when your ad is shown'
-  },
-  {
-    value: 'LINK_CLICKS',
-    label: 'Link Clicks',
-    description: 'Pay when people click on links in your ad'
-  },
-  {
-    value: 'POST_ENGAGEMENT',
-    label: 'Post Engagement',
-    description: 'Pay when people engage with your post'
-  },
-  {
-    value: 'PAGE_LIKES',
-    label: 'Page Likes',
-    description: 'Pay when people like your Page'
-  },
-  {
-    value: 'APP_INSTALLS',
-    label: 'App Installs',
-    description: 'Pay when people install your app'
-  },
-  {
-    value: 'VIDEO_VIEWS',
-    label: 'Video Views',
-    description: 'Pay when people watch your video'
-  },
-  {
-    value: 'THRUPLAY',
-    label: 'ThruPlay',
-    description: 'Pay when people watch your video to completion'
-  }
+  { value: 'IMPRESSIONS', label: 'Impressions', description: 'Pay when your ads are shown' },
+  { value: 'LINK_CLICKS', label: 'Link Clicks', description: 'Pay when people click your links' },
+  { value: 'POST_ENGAGEMENT', label: 'Post Engagement', description: 'Pay when people engage with your posts' },
+  { value: 'PAGE_LIKES', label: 'Page Likes', description: 'Pay when people like your page' },
+  { value: 'APP_INSTALLS', label: 'App Installs', description: 'Pay when people install your app' },
+  { value: 'VIDEO_VIEWS', label: 'Video Views', description: 'Pay when people watch your videos' },
+  { value: 'THRUPLAY', label: 'ThruPlay', description: 'Pay when people watch videos to completion' },
 ] as const;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
+// Helper function to get compatible billing events for an optimization goal
 export function getCompatibleBillingEvents(optimizationGoal: string): readonly string[] {
   const goal = OPTIMIZATION_GOALS.find(g => g.value === optimizationGoal);
   return goal?.compatibleBillingEvents || [];
 }
 
-export function isValidOptimizationBillingCombination(
-  optimizationGoal: string, 
-  billingEvent: string
-): boolean {
+// Helper function to validate optimization goal and billing event combination
+export function isValidOptimizationBillingCombination(optimizationGoal: string, billingEvent: string): boolean {
   const compatibleEvents = getCompatibleBillingEvents(optimizationGoal);
   return compatibleEvents.includes(billingEvent);
 }
 
-// ============================================================================
-// Countries Constant
-// ============================================================================
-
+// Countries for targeting
 export const COUNTRIES = [
   { code: 'US', name: 'United States' },
   { code: 'CA', name: 'Canada' },
@@ -438,93 +342,66 @@ export const COUNTRIES = [
   { code: 'JP', name: 'Japan' },
   { code: 'KR', name: 'South Korea' },
   { code: 'SG', name: 'Singapore' },
-  { code: 'NL', name: 'Netherlands' }
+  { code: 'NL', name: 'Netherlands' },
 ] as const;
 
-// ============================================================================
-// Platform Constants
-// ============================================================================
-
+// Facebook positions for ad placement
 export const FACEBOOK_POSITIONS = [
-  'feed',
-  'right_hand_column',
-  'instant_article',
-  'marketplace',
-  'video_feeds',
-  'story',
-  'search'
+  { value: 'feed', label: 'Facebook Feed' },
+  { value: 'right_hand_column', label: 'Facebook Right Column' },
+  { value: 'instant_article', label: 'Facebook Instant Articles' },
+  { value: 'marketplace', label: 'Facebook Marketplace' },
+  { value: 'video_feeds', label: 'Facebook Video Feeds' },
+  { value: 'story', label: 'Facebook Stories' },
+  { value: 'search', label: 'Facebook Search Results' },
 ] as const;
 
+// Publisher platforms
 export const PUBLISHER_PLATFORMS = [
-  'facebook',
-  'instagram',
-  'audience_network',
-  'messenger'
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'audience_network', label: 'Audience Network' },
+  { value: 'messenger', label: 'Messenger' },
 ] as const;
 
+// Bidding strategies
 export const BIDDING_STRATEGIES = [
   {
     value: 'LOWEST_COST_WITHOUT_CAP',
-    label: 'Lowest Cost',
-    description: 'Get the most results for your budget'
+    label: 'Lowest Cost (Automatic)',
+    description: 'Get the most results for your budget automatically'
   },
   {
     value: 'LOWEST_COST_WITH_BID_CAP',
     label: 'Lowest Cost with Bid Cap',
-    description: 'Control your maximum bid while getting the most results'
+    description: 'Set a maximum bid amount while optimizing for lowest cost'
   },
   {
     value: 'TARGET_COST',
     label: 'Target Cost',
-    description: 'Maintain a stable average cost per result'
+    description: 'Maintain a specific average cost per result'
   }
 ] as const;
 
-// ============================================================================
 // Ad Creation Types
-// ============================================================================
+export interface AdCreateRequest {
+  name: string;
+  adset_id: string;
+  creative: AdCreative;
+  status?: 'ACTIVE' | 'PAUSED';
+  tracking_specs?: TrackingSpec[];
+}
 
-export interface CallToAction {
-  type: string;
-  value?: {
-    link?: string;
-    link_caption?: string;
-    link_description?: string;
-    link_title?: string;
+export interface AdCreative {
+  name: string;
+  object_story_spec: ObjectStorySpec;
+  degrees_of_freedom_spec?: {
+    creative_features_spec?: {
+      standard_enhancements?: {
+        enroll_status: 'OPT_IN' | 'OPT_OUT';
+      };
+    };
   };
-}
-
-export interface ChildAttachment {
-  link?: string;
-  name?: string;
-  description?: string;
-  image_hash?: string;
-  video_id?: string;
-  call_to_action?: CallToAction;
-}
-
-export interface LinkData {
-  link?: string;
-  message?: string;
-  name?: string;
-  description?: string;
-  caption?: string;
-  image_hash?: string;
-  call_to_action?: CallToAction;
-  child_attachments?: ChildAttachment[];
-}
-
-export interface VideoData {
-  video_id?: string;
-  image_url?: string;
-  message?: string;
-  call_to_action?: CallToAction;
-}
-
-export interface PhotoData {
-  image_hash?: string;
-  caption?: string;
-  url?: string;
 }
 
 export interface ObjectStorySpec {
@@ -534,10 +411,43 @@ export interface ObjectStorySpec {
   photo_data?: PhotoData;
 }
 
-export interface AdCreative {
-  name: string;
-  object_story_spec: ObjectStorySpec;
-  degrees_of_freedom_spec?: Record<string, unknown>;
+export interface LinkData {
+  link: string;
+  message?: string;
+  name?: string; // Headline
+  description?: string; // Primary text
+  call_to_action?: CallToAction;
+  image_hash?: string;
+  child_attachments?: ChildAttachment[];
+}
+
+export interface VideoData {
+  video_id: string;
+  message?: string;
+  call_to_action?: CallToAction;
+  image_url?: string; // Thumbnail
+}
+
+export interface PhotoData {
+  image_hash: string;
+  message?: string;
+  call_to_action?: CallToAction;
+}
+
+export interface CallToAction {
+  type: string;
+  value?: {
+    link?: string;
+    link_caption?: string;
+    link_description?: string;
+  };
+}
+
+export interface ChildAttachment {
+  link: string;
+  name?: string;
+  description?: string;
+  image_hash?: string;
 }
 
 export interface TrackingSpec {
@@ -546,47 +456,34 @@ export interface TrackingSpec {
   application?: string[];
 }
 
-export interface AdCreateRequest {
-  name: string;
-  adset_id: string;
-  creative: AdCreative;
-  status?: string;
-  tracking_specs?: TrackingSpec[];
-}
-
-// ============================================================================
-// Final Constants
-// ============================================================================
-
+// Call to Action types
 export const CTA_TYPES = [
-  'LEARN_MORE',
-  'SHOP_NOW',
-  'BOOK_TRAVEL',
-  'DOWNLOAD',
-  'SIGN_UP',
-  'CONTACT_US',
-  'DONATE',
-  'SUBSCRIBE',
-  'SAY_THANKS',
-  'SELL_NOW',
-  'SHARE',
-  'PLAY_GAME',
-  'INSTALL_APP',
-  'USE_APP',
-  'CALL_NOW'
+  { value: 'LEARN_MORE', label: 'Learn More' },
+  { value: 'SHOP_NOW', label: 'Shop Now' },
+  { value: 'BOOK_TRAVEL', label: 'Book Travel' },
+  { value: 'DOWNLOAD', label: 'Download' },
+  { value: 'GET_QUOTE', label: 'Get Quote' },
+  { value: 'CONTACT_US', label: 'Contact Us' },
+  { value: 'APPLY_NOW', label: 'Apply Now' },
+  { value: 'SIGN_UP', label: 'Sign Up' },
+  { value: 'WATCH_MORE', label: 'Watch More' },
+  { value: 'PLAY_GAME', label: 'Play Game' },
+  { value: 'INSTALL_APP', label: 'Install App' },
+  { value: 'USE_APP', label: 'Use App' },
+  { value: 'INSTALL_MOBILE_APP', label: 'Install Mobile App' },
+  { value: 'USE_MOBILE_APP', label: 'Use Mobile App' },
+  { value: 'NO_BUTTON', label: 'No Button' },
 ] as const;
 
+// Media formats
 export const MEDIA_FORMATS = [
-  'image',
-  'video',
-  'carousel',
-  'collection'
+  { value: 'image', label: 'Single Image', description: 'JPG or PNG, recommended 1200x628px' },
+  { value: 'video', label: 'Single Video', description: 'MP4, MOV, or GIF, max 4GB' },
+  { value: 'carousel', label: 'Carousel', description: 'Multiple images or videos, 2-10 cards' },
+  { value: 'collection', label: 'Collection', description: 'Cover image/video + product catalog' },
 ] as const;
 
-// ============================================================================
-// Facebook Pages Types
-// ============================================================================
-
+// Facebook Pages and Instagram Account types
 export interface FacebookPage {
   id: string;
   name: string;
@@ -599,19 +496,16 @@ export interface InstagramAccount {
   name?: string;
   username: string;
   type: 'instagram_account';
-  connected_facebook_page?: string;
-  profile_picture_url?: string;
-  followers_count?: number;
-  media_count?: number;
+  connected_page_id?: string;
+  connected_page_name?: string;
 }
 
 export interface FacebookPagesResponse {
-  facebook_pages: FacebookPage[];
-  instagram_accounts: InstagramAccount[];
-  total_facebook_pages: number;
-  total_instagram_accounts: number;
-  has_more_facebook_pages: boolean;
-  has_more_instagram_accounts: boolean;
-  default_facebook_page?: string;
-  default_instagram_account?: string;
-}
+  success: boolean;
+  pages: FacebookPage[];
+  instagramAccounts: InstagramAccount[];
+  defaultPageId: string | null;
+  defaultPageName: string | null;
+  defaultPageType: 'facebook_page' | 'instagram_account' | null;
+  totalAccounts: number;
+} 
