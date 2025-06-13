@@ -1,65 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { campaignId: string } }
-) {
+export async function GET(request: NextRequest) {
   try {
-    const { campaignId } = params;
-
-    if (!campaignId) {
-      return NextResponse.json(
-        { error: 'Campaign ID is required' },
-        { status: 400 }
-      );
-    }
-
+    // Get user from session
     const supabase = await createClient();
-    
-    // Get authenticated user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
-    if (userError || !user) {
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
       return NextResponse.json(
         { error: 'Authentication required' },
         { status: 401 }
       );
     }
 
-    // Fetch campaign with ad account ownership verification
-    const { data: campaign, error: campaignError } = await supabase
-      .from('facebook_campaigns')
-      .select(`
-        *,
-        facebook_ad_accounts!inner(user_id)
-      `)
-      .eq('id', campaignId)
-      .eq('facebook_ad_accounts.user_id', user.id)
-      .single();
+    // Get the ad account ID from query params
+    const searchParams = request.nextUrl.searchParams;
+    const adAccountId = searchParams.get('adAccountId');
 
-    if (campaignError || !campaign) {
+    if (!adAccountId) {
       return NextResponse.json(
-        { error: 'Campaign not found or access denied' },
-        { status: 403 }
+        { error: 'Ad account ID is required' },
+        { status: 400 }
       );
     }
 
-    // Detect CBO (Campaign Budget Optimization)
-    const isCBOEnabled = !!(campaign.daily_budget || campaign.lifetime_budget);
+    // Verify user has access to this ad account
+    const { data: adAccount, error: adAccountError } = await supabase
+      .from('facebook_ad_accounts')
+      .select('id')
+      .eq('id', adAccountId)
+      .eq('user_id', user.id)
+      .single();
 
-    return NextResponse.json({
-      campaign: {
-        ...campaign,
-        is_cbo_enabled: isCBOEnabled
-      }
-    });
+    if (adAccountError || !adAccount) {
+      return NextResponse.json(
+        { error: 'Ad account not found or access denied' },
+        { status: 404 }
+      );
+    }
 
+    // Fetch campaigns for this ad account
+    const { data: campaigns, error: campaignsError } = await supabase
+      .from('facebook_campaigns')
+      .select('*')
+      .eq('ad_account_id', adAccountId)
+      .order('created_at', { ascending: false });
+
+    if (campaignsError) {
+      console.error('Error fetching campaigns:', campaignsError);
+      return NextResponse.json(
+        { error: `Failed to fetch campaigns: ${campaignsError.message}` },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ campaigns: campaigns || [] });
   } catch (error) {
-    console.error('Error fetching campaign:', error);
+    console.error('Error in campaigns API:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: errorMessage },
       { status: 500 }
     );
   }
-}
+} 
