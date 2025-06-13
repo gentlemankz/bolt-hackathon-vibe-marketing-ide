@@ -12,10 +12,6 @@ import { Loader2 } from "lucide-react";
 import { CAMPAIGN_OBJECTIVES, CampaignCreateRequest } from "@/lib/types";
 import { useCreateCampaign } from "@/lib/hooks/use-facebook-data";
 
-// ============================================================================
-// TypeScript Interfaces
-// ============================================================================
-
 interface CampaignCreateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -23,93 +19,73 @@ interface CampaignCreateDialogProps {
   adAccountName: string;
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
 export function CampaignCreateDialog({
   open,
   onOpenChange,
   adAccountId,
-  adAccountName
+  adAccountName,
 }: CampaignCreateDialogProps) {
-  // Form state
   const [formData, setFormData] = useState<CampaignCreateRequest>({
-    name: '',
-    objective: '',
-    status: 'PAUSED',
+    name: "",
+    objective: "",
+    status: "PAUSED",
     special_ad_categories: [],
-    buying_type: 'AUCTION'
   });
-
-  const [budgetType, setBudgetType] = useState<'daily' | 'lifetime'>('daily');
+  const [budgetType, setBudgetType] = useState<"daily" | "lifetime">("daily");
   const [error, setError] = useState<string | null>(null);
 
-  // Mutation hook
   const createCampaignMutation = useCreateCampaign();
 
-  // Helper functions
-  const handleBudgetChange = (field: string, value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value,
-      // Clear the other budget field when switching types
-      ...(field === 'daily_budget' && { lifetime_budget: undefined }),
-      ...(field === 'lifetime_budget' && { daily_budget: undefined })
-    }));
-  };
-
-  // Event handlers
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    // Form validation
     if (!formData.name.trim()) {
-      setError('Campaign name is required');
+      setError("Campaign name is required");
       return;
     }
 
     if (!formData.objective) {
-      setError('Campaign objective is required');
-      return;
-    }
-
-    // Budget validation
-    if (budgetType === 'daily' && !formData.daily_budget) {
-      setError('Daily budget is required');
-      return;
-    }
-
-    if (budgetType === 'lifetime' && !formData.lifetime_budget) {
-      setError('Lifetime budget is required');
+      setError("Campaign objective is required");
       return;
     }
 
     try {
       await createCampaignMutation.mutateAsync({
         adAccountId,
-        campaignData: formData
+        campaignData: formData,
       });
 
-      // Reset form and close dialog on success
+      // Reset form and close dialog
       setFormData({
-        name: '',
-        objective: '',
-        status: 'PAUSED',
+        name: "",
+        objective: "",
+        status: "PAUSED",
         special_ad_categories: [],
-        buying_type: 'AUCTION'
       });
-      setBudgetType('daily');
+      setBudgetType("daily");
       onOpenChange(false);
-
     } catch (err) {
-      const error = err as Error;
-      setError(error.message || 'Failed to create campaign');
+      setError(err instanceof Error ? err.message : "Failed to create campaign");
     }
   };
 
-  // Find selected objective for description display
+  const handleBudgetChange = (value: string) => {
+    if (budgetType === "daily") {
+      setFormData(prev => ({
+        ...prev,
+        daily_budget: value,
+        lifetime_budget: undefined,
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        lifetime_budget: value,
+        daily_budget: undefined,
+      }));
+    }
+  };
+
   const selectedObjective = CAMPAIGN_OBJECTIVES.find(obj => obj.value === formData.objective);
 
   return (
@@ -118,36 +94,34 @@ export function CampaignCreateDialog({
         <DialogHeader>
           <DialogTitle>Create New Campaign</DialogTitle>
           <DialogDescription>
-            Create a new campaign for ad account: {adAccountName}
+            Create a new campaign for {adAccountName}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Error Alert */}
           {error && (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
 
-          {/* Campaign Name */}
           <div className="space-y-2">
             <Label htmlFor="campaign-name">Campaign Name *</Label>
             <Input
               id="campaign-name"
+              placeholder="Enter campaign name"
               value={formData.name}
               onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-              placeholder="Enter campaign name"
-              required
+              disabled={createCampaignMutation.isPending}
             />
           </div>
 
-          {/* Campaign Objective */}
           <div className="space-y-2">
-            <Label htmlFor="objective">Campaign Objective *</Label>
+            <Label htmlFor="campaign-objective">Campaign Objective *</Label>
             <Select
               value={formData.objective}
               onValueChange={(value) => setFormData(prev => ({ ...prev, objective: value }))}
+              disabled={createCampaignMutation.isPending}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select campaign objective" />
@@ -170,12 +144,14 @@ export function CampaignCreateDialog({
             )}
           </div>
 
-          {/* Campaign Status */}
           <div className="space-y-2">
             <Label>Campaign Status</Label>
             <RadioGroup
               value={formData.status}
-              onValueChange={(value: 'ACTIVE' | 'PAUSED') => setFormData(prev => ({ ...prev, status: value }))}
+              onValueChange={(value: "ACTIVE" | "PAUSED") => 
+                setFormData(prev => ({ ...prev, status: value }))
+              }
+              disabled={createCampaignMutation.isPending}
               className="flex space-x-4"
             >
               <div className="flex items-center space-x-2">
@@ -188,16 +164,16 @@ export function CampaignCreateDialog({
               </div>
             </RadioGroup>
             <p className="text-xs text-muted-foreground">
-              We recommend starting with "Paused" to set up your ad sets first
+              Recommended: Start with &apos;Paused&apos; to set up ad sets and ads before going live
             </p>
           </div>
 
-          {/* Budget Type */}
           <div className="space-y-2">
-            <Label>Budget Type</Label>
+            <Label>Budget Type (Optional)</Label>
             <RadioGroup
               value={budgetType}
-              onValueChange={(value: 'daily' | 'lifetime') => setBudgetType(value)}
+              onValueChange={(value: "daily" | "lifetime") => setBudgetType(value)}
+              disabled={createCampaignMutation.isPending}
               className="flex space-x-4"
             >
               <div className="flex items-center space-x-2">
@@ -205,34 +181,26 @@ export function CampaignCreateDialog({
                 <Label htmlFor="daily">Daily Budget</Label>
               </div>
               <div className="flex items-center space-x-2">
-                <RadioGroupItem value="lifetime" id="lifetime" disabled />
+                <RadioGroupItem value="lifetime" id="lifetime" />
                 <Label htmlFor="lifetime">Lifetime Budget</Label>
               </div>
             </RadioGroup>
-            <p className="text-xs text-muted-foreground">
-              Lifetime budget is currently disabled for new campaigns
-            </p>
           </div>
 
-          {/* Budget Amount */}
           <div className="space-y-2">
-            <Label htmlFor="budget">
-              {budgetType === 'daily' ? 'Daily Budget' : 'Lifetime Budget'} (Optional)
+            <Label htmlFor="budget-amount">
+              {budgetType === "daily" ? "Daily Budget" : "Lifetime Budget"} (Optional)
             </Label>
             <Input
-              id="budget"
+              id="budget-amount"
               type="number"
-              step="0.01"
-              min="1"
-              value={budgetType === 'daily' ? formData.daily_budget || '' : formData.lifetime_budget || ''}
-              onChange={(e) => handleBudgetChange(
-                budgetType === 'daily' ? 'daily_budget' : 'lifetime_budget',
-                e.target.value
-              )}
-              placeholder="0.00"
+              placeholder="Enter amount in cents (e.g., 1000 = $10.00)"
+              value={budgetType === "daily" ? formData.daily_budget || "" : formData.lifetime_budget || ""}
+              onChange={(e) => handleBudgetChange(e.target.value)}
+              disabled={createCampaignMutation.isPending}
             />
             <p className="text-xs text-muted-foreground">
-              Budget amount in cents (e.g., 1000 = $10.00). Leave empty to set later.
+              Amount in cents. Leave empty to set budget at ad set level.
             </p>
           </div>
 
@@ -248,14 +216,15 @@ export function CampaignCreateDialog({
             <Button
               type="submit"
               disabled={createCampaignMutation.isPending || !formData.name.trim() || !formData.objective}
-              className="flex items-center gap-2"
             >
-              {createCampaignMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              {createCampaignMutation.isPending ? 'Creating...' : 'Create Campaign'}
+              {createCampaignMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Create Campaign
             </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
   );
-}
+} 
