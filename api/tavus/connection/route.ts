@@ -2,241 +2,187 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 
-export async function GET(request: NextRequest) {
+// Test Tavus API key validity
+async function testTavusApiKey(apiKey: string): Promise<{ valid: boolean; error?: string }> {
+  try {
+    const response = await fetch('https://tavusapi.com/v2/replicas', {
+      headers: {
+        'x-api-key': apiKey,
+      },
+    });
+
+    if (response.ok) {
+      return { valid: true };
+    } else if (response.status === 401) {
+      return { valid: false, error: 'Invalid API key' };
+    } else if (response.status === 403) {
+      return { valid: false, error: 'API key lacks required permissions' };
+    } else {
+      return { valid: false, error: 'Unable to verify API key' };
+    }
+  } catch {
+    return { valid: false, error: 'Network error while testing API key' };
+  }
+}
+
+export async function GET() {
   try {
     const supabase = await createClient();
+    const serviceClient = createServiceClient();
     
-    // Get authenticated user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
-    if (userError || !user) {
-      return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
-      );
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get Tavus connection for user
-    const { data: connection, error: connectionError } = await supabase
+    // Use service client to bypass RLS while validating user ownership
+    const { data: connection } = await serviceClient
       .from('tavus_connections')
-      .select('*')
+      .select('id, is_connected, connection_status, error_message, last_connected_at, created_at')
       .eq('user_id', user.id)
       .single();
 
-    if (connectionError) {
-      if (connectionError.code === 'PGRST116') {
-        // No connection found
-        return NextResponse.json(
-          { error: 'No Tavus connection found' },
-          { status: 404 }
-        );
-      }
-      
-      console.error('Error fetching Tavus connection:', connectionError);
-      return NextResponse.json(
-        { error: 'Failed to fetch Tavus connection' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      connection
-    });
-
-  } catch (error) {
-    console.error('Error in Tavus connection GET route:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ connection: connection || null });
+  } catch {
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { api_key } = body;
-
-    if (!api_key || !api_key.trim()) {
-      return NextResponse.json(
-        { error: 'API key is required' },
-        { status: 400 }
-      );
-    }
-
     const supabase = await createClient();
-    
-    // Get authenticated user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
-    if (userError || !user) {
-      return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
-      );
-    }
-
-    // Validate API key by making a test request to Tavus API
-    try {
-      const testResponse = await fetch('https://tavusapi.com/v2/replicas?replica_type=user&verbose=true', {
-        headers: {
-          'x-api-key': api_key.trim(),
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!testResponse.ok) {
-        if (testResponse.status === 401) {
-          return NextResponse.json(
-            { error: 'Invalid API key. Please check your Tavus API key and try again.' },
-            { status: 400 }
-          );
-        } else if (testResponse.status === 403) {
-          return NextResponse.json(
-            { error: 'API key does not have sufficient permissions. Please check your Tavus account settings.' },
-            { status: 400 }
-          );
-        } else if (testResponse.status === 429) {
-          return NextResponse.json(
-            { error: 'Rate limit exceeded. Please try again later.' },
-            { status: 400 }
-          );
-        } else {
-          return NextResponse.json(
-            { error: 'Failed to validate API key. Please try again.' },
-            { status: 400 }
-          );
-        }
-      }
-    } catch (validationError) {
-      console.error('Error validating Tavus API key:', validationError);
-      return NextResponse.json(
-        { error: 'Failed to validate API key. Please check your connection and try again.' },
-        { status: 400 }
-      );
-    }
-
-    // Use service client to bypass RLS for upsert operation
     const serviceClient = createServiceClient();
     
-    // Upsert Tavus connection
-    const connectionData = {
-      user_id: user.id,
-      api_key: api_key.trim(),
-      is_connected: true,
-      connection_status: 'connected',
-      last_connected_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    const { data: connection, error: connectionError } = await serviceClient
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { apiKey } = await request.json();
+
+    if (!apiKey) {
+      return NextResponse.json({ error: 'API key is required' }, { status: 400 });
+    }
+
+    // Test the API key
+    const test = await testTavusApiKey(apiKey);
+    if (!test.valid) {
+      return NextResponse.json({ error: test.error }, { status: 400 });
+    }
+
+    // Use service client for database operations
+    const { data: connection } = await serviceClient
       .from('tavus_connections')
-      .upsert(connectionData, {
-        onConflict: 'user_id'
+      .upsert({
+        user_id: user.id,
+        api_key: apiKey,
+        is_connected: true,
+        connection_status: 'connected',
+        error_message: null,
+        last_connected_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .select()
       .single();
 
-    if (connectionError) {
-      console.error('Error saving Tavus connection:', connectionError);
-      return NextResponse.json(
-        { error: 'Failed to save Tavus connection' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      success: true,
-      connection
+    return NextResponse.json({ 
+      connection: {
+        id: connection.id,
+        is_connected: connection.is_connected,
+        connection_status: connection.connection_status,
+        error_message: connection.error_message,
+        last_connected_at: connection.last_connected_at,
+        created_at: connection.created_at,
+      }
     });
-
-  } catch (error) {
-    console.error('Error in Tavus connection POST route:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+  } catch {
+    return NextResponse.json({ error: 'Failed to save connection' }, { status: 500 });
   }
 }
 
-export async function DELETE(request: NextRequest) {
+export async function DELETE() {
   try {
     const supabase = await createClient();
+    const serviceClient = createServiceClient();
     
-    // Get authenticated user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
-    if (userError || !user) {
-      return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
-      );
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Use service client to bypass RLS for cleanup operations
-    const serviceClient = createServiceClient();
-
-    console.log('Starting Tavus data cleanup for user:', user.id);
-
-    // Delete in specific order to handle foreign key constraints
+    // Delete all user's Tavus data from database (similar to Facebook disconnect)
     
-    // 1. Delete videos
+    // 1. Delete conversations
+    const { error: conversationsError } = await serviceClient
+      .from('tavus_conversations')
+      .delete()
+      .eq('user_id', user.id);
+    
+    if (conversationsError) {
+      console.error('Error deleting conversations:', conversationsError);
+    }
+    
+    // 2. Delete videos
     const { error: videosError } = await serviceClient
       .from('tavus_videos')
       .delete()
       .eq('user_id', user.id);
-
+      
     if (videosError) {
-      console.error('Error deleting Tavus videos:', videosError);
+      console.error('Error deleting videos:', videosError);
     }
-
-    // 2. Delete personas
+    
+    // 3. Delete personas
     const { error: personasError } = await serviceClient
       .from('tavus_personas')
       .delete()
       .eq('user_id', user.id);
-
+      
     if (personasError) {
-      console.error('Error deleting Tavus personas:', personasError);
+      console.error('Error deleting personas:', personasError);
     }
-
-    // 3. Delete replicas
+    
+    // 4. Delete replicas
     const { error: replicasError } = await serviceClient
       .from('tavus_replicas')
       .delete()
       .eq('user_id', user.id);
-
+      
     if (replicasError) {
-      console.error('Error deleting Tavus replicas:', replicasError);
+      console.error('Error deleting replicas:', replicasError);
     }
-
-    // 4. Delete connection
+    
+    // 5. Delete lead nurturing files
+    const { error: filesError } = await serviceClient
+      .from('lead_nurturing_files')
+      .delete()
+      .eq('user_id', user.id);
+      
+    if (filesError) {
+      console.error('Error deleting lead nurturing files:', filesError);
+    }
+    
+    // 6. Delete connection (should be done last)
     const { error: connectionError } = await serviceClient
       .from('tavus_connections')
       .delete()
       .eq('user_id', user.id);
-
+      
     if (connectionError) {
-      console.error('Error deleting Tavus connection:', connectionError);
-      return NextResponse.json(
-        { error: 'Failed to delete Tavus connection' },
-        { status: 500 }
-      );
+      console.error('Error deleting connection:', connectionError);
     }
 
-    console.log('Tavus data cleanup completed for user:', user.id);
-
-    return NextResponse.json({
-      success: true,
-      message: 'Tavus account disconnected successfully'
-    });
-
-  } catch (error) {
-    console.error('Error in Tavus connection DELETE route:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ error: 'Failed to disconnect' }, { status: 500 });
   }
-}
+} 
