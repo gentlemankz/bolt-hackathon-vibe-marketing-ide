@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -131,19 +131,19 @@ export function SidebarExplorer({
   useEffect(() => {
     const prefetchData = async () => {
       // Prefetch campaigns for expanded accounts
-      for (const accountId of expandedAccounts) {
+      for (const accountId of Array.from(expandedAccounts)) {
         console.log('🔄 SidebarExplorer: Prefetching campaigns for account:', accountId);
         await prefetchCampaigns(queryClient, accountId);
       }
 
       // Prefetch ad sets for expanded campaigns
-      for (const campaignId of expandedCampaigns) {
+      for (const campaignId of Array.from(expandedCampaigns)) {
         console.log('🔄 SidebarExplorer: Prefetching ad sets for campaign:', campaignId);
         await prefetchAdSets(queryClient, campaignId);
       }
 
       // Prefetch ads for expanded ad sets
-      for (const adSetId of expandedAdSets) {
+      for (const adSetId of Array.from(expandedAdSets)) {
         console.log('🔄 SidebarExplorer: Prefetching ads for ad set:', adSetId);
         await prefetchAds(queryClient, adSetId);
       }
