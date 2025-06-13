@@ -9,178 +9,164 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
 
-// ============================================================================
-// TypeScript Interfaces
-// ============================================================================
-
 interface AdAccount {
   id: string;
   name: string;
   account_id: string;
   account_status: number;
-  amount_spent: string;
-  balance: string;
-  currency: string;
-  business_city: string;
-  business_country_code: string;
-  owner: string;
-  age: string;
-  is_connected?: boolean;
+  amount_spent?: string;
+  balance?: string;
+  currency?: string;
+  isConnected: boolean;
 }
 
-interface ApiError {
-  message: string;
-  code?: string;
-}
+type ApiError = {
+  error: string;
+};
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
-export default function AdAccountSelector() {
-  const [adAccounts, setAdAccounts] = useState<AdAccount[]>([]);
-  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-  const [connecting, setConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function AdAccountSelector() {
   const router = useRouter();
+  const [adAccounts, setAdAccounts] = useState<AdAccount[]>([]);
+  const [selectedAdAccountId, setSelectedAdAccountId] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Fetch ad accounts on component mount
   useEffect(() => {
     fetchAdAccounts();
   }, []);
 
-  // Auto-select first non-connected account
-  useEffect(() => {
-    if (adAccounts.length > 0 && !selectedAccountId) {
-      const firstNonConnected = adAccounts.find(account => !account.is_connected);
-      if (firstNonConnected) {
-        setSelectedAccountId(firstNonConnected.id);
-      } else {
-        setSelectedAccountId(adAccounts[0].id);
-      }
-    }
-  }, [adAccounts, selectedAccountId]);
-
   const fetchAdAccounts = async () => {
     try {
-      setLoading(true);
+      setIsLoading(true);
       setError(null);
 
-      const response = await fetch('/api/facebook/ad-accounts');
+      const response = await fetch("/api/facebook/ad-accounts");
       
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch ad accounts');
+        const errorData = await response.json() as ApiError;
+        throw new Error(errorData.error || "Failed to fetch ad accounts");
       }
-
+      
       const data = await response.json();
       setAdAccounts(data.adAccounts || []);
-    } catch (err) {
-      const error = err as ApiError;
-      setError(error.message || 'Failed to load ad accounts');
+      
+      // Auto-select the first non-connected account if any
+      const nonConnectedAccount = data.adAccounts?.find((account: AdAccount) => !account.isConnected);
+      if (nonConnectedAccount) {
+        setSelectedAdAccountId(nonConnectedAccount.id);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to fetch ad accounts";
+      setError(errorMessage);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   const handleConnect = async () => {
-    if (!selectedAccountId) return;
+    if (!selectedAdAccountId) {
+      setError("Please select an ad account");
+      return;
+    }
 
     try {
-      setConnecting(true);
+      setIsConnecting(true);
       setError(null);
 
-      const response = await fetch('/api/facebook/ad-accounts/connect', {
-        method: 'POST',
+      const response = await fetch("/api/facebook/connect-adaccount", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          adAccountId: selectedAccountId,
-        }),
+        body: JSON.stringify({ adAccountId: selectedAdAccountId }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to connect ad account');
+        const errorData = await response.json() as ApiError;
+        throw new Error(errorData.error || "Failed to connect ad account");
       }
 
-      // Redirect to dashboard on success
-      router.push('/dashboard');
-    } catch (err) {
-      const error = err as ApiError;
-      setError(error.message || 'Failed to connect ad account');
+      // Redirect to dashboard or reload the ad accounts
+      router.push("/dashboard");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to connect ad account";
+      setError(errorMessage);
     } finally {
-      setConnecting(false);
+      setIsConnecting(false);
     }
   };
 
   const getAccountStatusText = (status: number): string => {
-    const statusMap: Record<number, string> = {
-      1: 'ACTIVE',
-      2: 'DISABLED',
-      3: 'UNSETTLED',
-      7: 'PENDING_RISK_REVIEW',
-      9: 'PENDING_SETTLEMENT',
-      100: 'PENDING_CLOSURE',
-      101: 'CLOSED',
-      201: 'ANY_ACTIVE',
-      202: 'ANY_CLOSED',
-    };
-    return statusMap[status] || 'UNKNOWN';
+    switch (status) {
+      case 1:
+        return "Active";
+      case 2:
+        return "Disabled";
+      case 3:
+        return "Unsettled";
+      case 7:
+        return "Pending Review";
+      case 8:
+        return "Pending Closure";
+      case 9:
+        return "Closed";
+      case 100:
+        return "Pending Risk Review";
+      case 101:
+        return "Pending Settlement";
+      default:
+        return `Status: ${status}`;
+    }
   };
 
-  // Loading state
-  if (loading) {
+  if (isLoading) {
     return (
-      <Card className="w-full max-w-2xl mx-auto">
+      <Card className="w-full max-w-md mx-auto">
         <CardHeader>
           <CardTitle>Loading Ad Accounts</CardTitle>
-          <CardDescription>
-            Please wait while we fetch your Facebook ad accounts...
-          </CardDescription>
+          <CardDescription>Please wait while we fetch your ad accounts...</CardDescription>
         </CardHeader>
-        <CardContent className="flex items-center justify-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <CardContent className="flex justify-center py-8">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-current border-t-transparent"></div>
         </CardContent>
       </Card>
     );
   }
 
-  // Empty state
   if (adAccounts.length === 0) {
     return (
-      <Card className="w-full max-w-2xl mx-auto">
+      <Card className="w-full max-w-md mx-auto">
         <CardHeader>
           <CardTitle>No Ad Accounts Found</CardTitle>
           <CardDescription>
-            We couldn't find any Facebook ad accounts associated with your account.
+            You don&apos;t have any ad accounts associated with your Facebook account.
           </CardDescription>
         </CardHeader>
-        <CardContent className="text-center py-8">
-          <p className="text-muted-foreground mb-4">
-            Make sure you have access to at least one Facebook ad account and try again.
-          </p>
-          <Button onClick={fetchAdAccounts} variant="outline">
-            Retry
+        <CardFooter>
+          <Button
+            variant="outline"
+            onClick={() => router.push("/dashboard")}
+            className="w-full"
+          >
+            Return to Dashboard
           </Button>
-        </CardContent>
+        </CardFooter>
       </Card>
     );
   }
 
   return (
-    <Card className="w-full max-w-2xl mx-auto">
+    <Card className="w-full max-w-md mx-auto">
       <CardHeader>
-        <CardTitle>Select Ad Account</CardTitle>
+        <CardTitle>Select an Ad Account</CardTitle>
         <CardDescription>
-          Choose the Facebook ad account you want to connect and manage.
+          Choose the ad account you want to connect to access campaigns, ad sets, and ads.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent>
         {error && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
@@ -188,76 +174,58 @@ export default function AdAccountSelector() {
         )}
 
         <RadioGroup
-          value={selectedAccountId}
-          onValueChange={setSelectedAccountId}
+          value={selectedAdAccountId}
+          onValueChange={setSelectedAdAccountId}
           className="space-y-3"
         >
           {adAccounts.map((account) => (
             <div
               key={account.id}
-              className={`flex items-center space-x-3 rounded-lg border p-4 ${
-                selectedAccountId === account.id
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border'
-              } ${account.is_connected ? 'opacity-60' : ''}`}
+              className={`flex items-center space-x-2 rounded-md border p-3 ${
+                account.isConnected ? "border-green-500 bg-green-50" : ""
+              }`}
             >
               <RadioGroupItem
                 value={account.id}
                 id={account.id}
-                disabled={account.is_connected}
+                disabled={account.isConnected}
               />
-              <Label
-                htmlFor={account.id}
-                className="flex-1 cursor-pointer space-y-1"
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <div>
-                    <div className="font-medium">{account.name}</div>
-                    <div className="text-sm text-muted-foreground">
-                      ID: {account.account_id}
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      Status: {getAccountStatusText(account.account_status)} • {account.currency}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-medium">
-                      Balance: {parseFloat(account.balance).toLocaleString()} {account.currency}
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      Spent: {parseFloat(account.amount_spent).toLocaleString()} {account.currency}
-                    </div>
-                  </div>
+              <Label htmlFor={account.id} className="flex-1 cursor-pointer">
+                <div className="font-medium">{account.name}</div>
+                <div className="text-xs space-y-1 text-muted-foreground">
+                  <div>ID: {account.account_id}</div>
+                  <div>Status: {getAccountStatusText(account.account_status)}</div>
+                  {account.isConnected && <div className="text-green-600 font-medium">Already connected</div>}
                 </div>
-                {account.is_connected && (
-                  <div className="text-xs text-green-600 font-medium">
-                    ✓ Already Connected
-                  </div>
-                )}
               </Label>
             </div>
           ))}
         </RadioGroup>
       </CardContent>
-      <CardFooter className="flex justify-between">
+      <CardFooter className="flex flex-col sm:flex-row gap-2">
         <Button
           variant="outline"
-          onClick={fetchAdAccounts}
-          disabled={connecting}
+          onClick={() => router.push("/dashboard")}
+          className="w-full sm:w-auto"
+          disabled={isConnecting}
         >
-          Refresh
+          Cancel
         </Button>
         <Button
           onClick={handleConnect}
-          disabled={!selectedAccountId || connecting || adAccounts.find(a => a.id === selectedAccountId)?.is_connected}
-          className="flex items-center gap-2"
+          className="w-full sm:w-auto"
+          disabled={isConnecting || !selectedAdAccountId || adAccounts.every(a => a.isConnected)}
         >
-          {connecting && (
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+          {isConnecting ? (
+            <>
+              <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              Connecting...
+            </>
+          ) : (
+            "Connect Ad Account"
           )}
-          {connecting ? 'Connecting...' : 'Connect Account'}
         </Button>
       </CardFooter>
     </Card>
   );
-}
+} 
