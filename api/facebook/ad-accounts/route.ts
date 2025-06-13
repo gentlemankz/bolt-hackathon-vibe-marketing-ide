@@ -5,55 +5,56 @@ import { getUserAdAccounts } from '@/lib/meta-api';
 
 export async function GET() {
   try {
+    // Get the user
     const supabase = await createClient();
-    
-    // Get authenticated user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     
-    if (userError || !user) {
+    if (!user || userError) {
       return NextResponse.json(
-        { error: 'Authentication required' },
+        { error: 'Unauthorized' },
         { status: 401 }
       );
     }
-
-    // Get Facebook access token
+    
+    // Get the Facebook access token
     const facebookService = new FacebookService(supabase);
     const accessToken = await facebookService.getAccessToken(user.id);
     
     if (!accessToken) {
       return NextResponse.json(
-        { error: 'Facebook account not connected' },
+        { error: 'Facebook access token not found or expired' },
         { status: 401 }
       );
     }
-
-    // Fetch ad accounts from Meta API
-    const adAccountsResponse = await getUserAdAccounts(accessToken);
     
-    // Get connected ad accounts from database
-    const { data: connectedAccounts } = await supabase
-      .from('facebook_ad_accounts')
-      .select('id')
-      .eq('user_id', user.id);
-
-    const connectedAccountIds = new Set(connectedAccounts?.map(acc => acc.id) || []);
-
-    // Map ad accounts with connection status
-    const adAccountsWithStatus = adAccountsResponse.data.map(account => ({
+    // Get the ad accounts from Facebook
+    const response = await getUserAdAccounts(accessToken);
+    
+    // Get the connected ad accounts from Supabase
+    const connectedAccounts = await facebookService.getAdAccounts(user.id);
+    const connectedIds = new Set(connectedAccounts.map(account => account.id));
+    
+    // Add a flag to indicate if the ad account is already connected
+    const adAccounts = response.data.map((account: { 
+      id: string; 
+      name: string; 
+      account_id: string;
+      account_status: number;
+      amount_spent: string;
+      balance: string;
+      currency: string;
+    }) => ({
       ...account,
-      isConnected: connectedAccountIds.has(account.id)
+      isConnected: connectedIds.has(account.id)
     }));
-
-    return NextResponse.json({
-      adAccounts: adAccountsWithStatus
-    });
-
-  } catch (error) {
-    console.error('Error fetching ad accounts:', error);
+    
+    return NextResponse.json({ adAccounts });
+  } catch (error: unknown) {
+    console.error('Error getting Facebook ad accounts:', error);
+    const errorMessage = error instanceof Error ? error.message : 'An error occurred';
     return NextResponse.json(
-      { error: 'Failed to fetch ad accounts' },
+      { error: errorMessage },
       { status: 500 }
     );
   }
-}
+} 
