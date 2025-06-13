@@ -6,33 +6,25 @@ import { getFacebookOAuthUrl } from "@/lib/meta-api";
 import { ButtonProps } from "@/components/ui/button";
 import React from "react";
 
-// ============================================================================
-// TypeScript Interfaces
-// ============================================================================
-
 interface FacebookConnectButtonProps extends ButtonProps {
   children?: React.ReactNode;
   requiresReconnect?: boolean;
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
-export function FacebookConnectButton({
-  children,
+export function FacebookConnectButton({ 
+  children, 
   className,
   requiresReconnect = false,
   onClick,
-  ...props
+  ...props 
 }: FacebookConnectButtonProps) {
   const handleConnect = (e: React.MouseEvent<HTMLButtonElement>) => {
-    // First call any provided onClick handler
+    // Call any onClick handler passed as prop
     if (onClick) {
       onClick(e);
     }
     
-    // Then redirect to Facebook OAuth URL
+    // Redirect to Facebook OAuth URL
     window.location.href = getFacebookOAuthUrl();
   };
 
@@ -58,4 +50,4 @@ export function FacebookConnectButton({
       </p>
     </div>
   );
-}
+} 
