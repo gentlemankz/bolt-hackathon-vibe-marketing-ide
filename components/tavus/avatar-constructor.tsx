@@ -7,902 +7,729 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { 
   Upload, 
-  Play, 
-  Download, 
-  Trash2, 
-  User, 
   Video, 
-  Zap, 
-  AlertCircle, 
-  CheckCircle, 
-  Loader2,
-  Plus,
-  Eye,
-  Clock,
-  Star
+  User, 
+  RefreshCw,
+  Camera,
+  Play,
+  ExternalLink,
+  Download
 } from "lucide-react";
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { 
   useTavusReplicas, 
   useTavusStockReplicas, 
-  useTavusPersonas, 
-  useTavusStockPersonas,
   useTavusVideos,
-  useCreateReplica,
-  useCreatePersona,
+  useAllTavusReplicas,
+  useCreateReplica, 
   useCreateVideo,
-  useDeleteReplica,
-  useAllTavusReplicas
+  useTavusStockPersonas
 } from "@/lib/hooks/use-tavus-data";
-import { TavusReplica, TavusPersona, TavusVideo, TavusStockPersona, AvatarCreationRequest } from "@/lib/types";
+import type { TavusVideo } from "@/lib/types";
+import { TavusConnect } from "./tavus-connect";
 
 export function AvatarConstructor() {
   const [activeTab, setActiveTab] = useState("replicas");
-  
-  // Replica creation state
-  const [replicaName, setReplicaName] = useState("");
-  const [trainVideoFile, setTrainVideoFile] = useState<File | null>(null);
-  const [trainVideoUrl, setTrainVideoUrl] = useState("");
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isUploading, setIsUploading] = useState(false);
-  
-  // Video creation state
-  const [selectedReplicaId, setSelectedReplicaId] = useState("");
-  const [videoScript, setVideoScript] = useState("");
-  const [videoName, setVideoName] = useState("");
-  const [backgroundUrl, setBackgroundUrl] = useState("");
-  
-  // Persona creation state
-  const [personaName, setPersonaName] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [personaContext, setPersonaContext] = useState("");
-  
-  // UI state
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [selectedStockReplica, setSelectedStockReplica] = useState<TavusReplica | null>(null);
-  const [selectedPersona, setSelectedPersona] = useState<TavusPersona | TavusStockPersona | null>(null);
-  
-  // File input ref
+  const [selectedReplica, setSelectedReplica] = useState<string>("");
+  const [replicaName, setReplicaName] = useState<string>("");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string>("");
+  const [script, setScript] = useState<string>("");
+  const [videoName, setVideoName] = useState<string>("");
+  const [isTavusConnected, setIsTavusConnected] = useState<boolean | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  // Hooks
-  const { data: userReplicas, isLoading: userReplicasLoading, error: userReplicasError } = useTavusReplicas();
-  const { data: stockReplicas, isLoading: stockReplicasLoading, error: stockReplicasError } = useTavusStockReplicas();
-  const { data: allReplicasData, isLoading: allReplicasLoading } = useAllTavusReplicas();
-  const { data: userPersonas, isLoading: userPersonasLoading } = useTavusPersonas();
-  const { data: stockPersonas } = useTavusStockPersonas();
-  const { data: videos, isLoading: videosLoading } = useTavusVideos();
-  
+
+  // Check Tavus connection status
+  useEffect(() => {
+    const checkTavusConnection = async () => {
+      try {
+        const response = await fetch('/api/tavus/connection');
+        if (response.ok) {
+          const data = await response.json();
+          setIsTavusConnected(data.connection?.is_connected && data.connection?.connection_status === 'connected');
+        } else {
+          setIsTavusConnected(false);
+        }
+      } catch {
+        setIsTavusConnected(false);
+      }
+    };
+
+    checkTavusConnection();
+  }, []);
+
+  const handleConnectionSuccess = () => {
+    setIsTavusConnected(true);
+  };
+
+  // React Query hooks
+  const { data: replicas = [], isLoading: isLoadingReplicas } = useTavusReplicas();
+  const { data: stockReplicas = [], isLoading: isLoadingStockReplicas } = useTavusStockReplicas();
+  const { data: allReplicasData } = useAllTavusReplicas();
+  const { data: stockPersonas = [], isLoading: isLoadingStockPersonas } = useTavusStockPersonas();
+  const { data: videos = [], isLoading: isLoadingVideos } = useTavusVideos();
+
   // Mutations
   const createReplicaMutation = useCreateReplica();
-  const createPersonaMutation = useCreatePersona();
   const createVideoMutation = useCreateVideo();
-  const deleteReplicaMutation = useDeleteReplica();
+  
+  // Get all available replicas for video generation
+  const availableReplicas = allReplicasData ? allReplicasData.allReplicas : [...stockReplicas, ...replicas];
+  const readyReplicas = availableReplicas.filter(r => r.status === 'ready');
 
-  // Clear messages after 5 seconds
-  useEffect(() => {
-    if (error || success) {
-      const timer = setTimeout(() => {
-        setError(null);
-        setSuccess(null);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [error, success]);
+  
 
-  // Status color helper
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'ready':
-        return 'bg-green-100 text-green-800';
-      case 'training':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'error':
-        return 'bg-red-100 text-red-800';
-      case 'generating':
-        return 'bg-blue-100 text-blue-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  // File upload handler
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      // Validate file type
-      if (!file.type.startsWith('video/')) {
-        setError('Please select a video file');
-        return;
-      }
-      
-      // Validate file size (100MB limit)
-      if (file.size > 100 * 1024 * 1024) {
-        setError('Video file must be less than 100MB');
-        return;
-      }
-      
-      setTrainVideoFile(file);
-      setError(null);
+      setVideoFile(file);
+      // In a real implementation, you'd upload this to a storage service
+      // and get a public URL. For now, we'll use a placeholder.
+      setVideoUrl(`https://example.com/uploads/${file.name}`);
     }
   };
 
-  // Simulate file upload (in real implementation, this would upload to cloud storage)
-  const uploadFile = async (file: File): Promise<string> => {
-    setIsUploading(true);
-    setUploadProgress(0);
-    
-    // Simulate upload progress
-    for (let i = 0; i <= 100; i += 10) {
-      setUploadProgress(i);
-      await new Promise(resolve => setTimeout(resolve, 200));
-    }
-    
-    setIsUploading(false);
-    
-    // Return a mock URL (in real implementation, this would be the actual uploaded file URL)
-    return `https://example.com/uploads/${file.name}`;
-  };
-
-  // Create replica handler
   const handleCreateReplica = async () => {
-    if (!replicaName.trim()) {
-      setError('Please enter a replica name');
-      return;
-    }
-
-    let videoUrl = trainVideoUrl;
-    
-    if (trainVideoFile) {
-      try {
-        videoUrl = await uploadFile(trainVideoFile);
-      } catch (err) {
-        setError('Failed to upload video file');
-        return;
-      }
-    }
-
-    if (!videoUrl) {
-      setError('Please provide a training video URL or upload a file');
+    if (!videoUrl || !replicaName) {
+      alert("Please provide a video URL and replica name");
       return;
     }
 
     try {
       await createReplicaMutation.mutateAsync({
         trainVideoUrl: videoUrl,
-        replicaName: replicaName.trim()
+        replicaName: replicaName,
       });
-      
-      setSuccess('Replica creation started! Training may take several minutes.');
-      setReplicaName('');
-      setTrainVideoFile(null);
-      setTrainVideoUrl('');
-      setUploadProgress(0);
-      
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create replica');
+      setVideoFile(null);
+      setVideoUrl("");
+      setReplicaName("");
+      alert("Replica creation started! Training may take several hours.");
+    } catch (error) {
+      console.error("Error creating replica:", error);
+      alert("Failed to create replica. Please try again.");
     }
   };
 
-  // Create persona handler
-  const handleCreatePersona = async () => {
-    if (!personaName.trim() || !systemPrompt.trim() || !personaContext.trim()) {
-      setError('Please fill in all persona fields');
-      return;
-    }
-
-    try {
-      await createPersonaMutation.mutateAsync({
-        personaName: personaName.trim(),
-        systemPrompt: systemPrompt.trim(),
-        context: personaContext.trim()
-      });
-      
-      setSuccess('Persona created successfully!');
-      setPersonaName('');
-      setSystemPrompt('');
-      setPersonaContext('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create persona');
-    }
-  };
-
-  // Create video handler
   const handleCreateVideo = async () => {
-    if (!selectedReplicaId || !videoScript.trim() || !videoName.trim()) {
-      setError('Please select a replica and fill in all video fields');
+    if (!selectedReplica || !script || !videoName) {
+      alert("Please select a replica, enter a script, and provide a video name");
+      return;
+    }
+
+    // Basic validation
+    if (script.length < 10) {
+      alert("Script is too short. Please write at least a few sentences for the AI to speak.");
+      return;
+    }
+
+    if (script.length > 2000) {
+      alert("Script is too long. Please keep it under 2000 characters for optimal results.");
       return;
     }
 
     try {
-      const request: AvatarCreationRequest = {
-        replica_id: selectedReplicaId,
-        script: videoScript.trim(),
-        video_name: videoName.trim(),
-        background_url: backgroundUrl.trim() || undefined
-      };
-
-      await createVideoMutation.mutateAsync(request);
-      
-      setSuccess('Video generation started! This may take a few minutes.');
-      setSelectedReplicaId('');
-      setVideoScript('');
-      setVideoName('');
-      setBackgroundUrl('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create video');
+      await createVideoMutation.mutateAsync({
+        replica_id: selectedReplica,
+        script: script,
+        video_name: videoName,
+      });
+      setScript("");
+      setVideoName("");
+      // Don't use alert, let the UI handle success feedback
+    } catch (error) {
+      console.error("Error creating video:", error);
+      // The error will be displayed by the error Alert component below the button
     }
   };
 
-  // Delete replica handler
-  const handleDeleteReplica = async (replicaId: string) => {
-    if (!confirm('Are you sure you want to delete this replica? This action cannot be undone.')) {
-      return;
-    }
-
-    try {
-      await deleteReplicaMutation.mutateAsync(replicaId);
-      setSuccess('Replica deleted successfully');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete replica');
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'ready':
+      case 'active':
+        return 'bg-green-100 text-green-800';
+      case 'training':
+      case 'generating':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'error':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
     }
   };
 
-  // Get all available replicas for video creation
-  const getAllReplicas = () => {
-    const allReplicas = [];
-    if (allReplicasData?.stockReplicas) {
-      allReplicas.push(...allReplicasData.stockReplicas);
-    }
-    if (allReplicasData?.userReplicas) {
-      allReplicas.push(...allReplicasData.userReplicas);
-    }
-    return allReplicas.filter(replica => replica.status === 'ready');
-  };
+  // Show loading state while checking connection
+  if (isTavusConnected === null) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-center py-12">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    );
+  }
 
-  // Render replicas tab
-  const renderReplicasTab = () => (
-    <div className="space-y-6">
-      {/* Create New Replica */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Plus className="h-5 w-5" />
-            Create New Replica
-          </CardTitle>
-          <CardDescription>
-            Train a custom AI avatar using your own video
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="replica-name">Replica Name</Label>
-            <Input
-              id="replica-name"
-              value={replicaName}
-              onChange={(e) => setReplicaName(e.target.value)}
-              placeholder="Enter a name for your replica"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Training Video</Label>
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <Input
-                  value={trainVideoUrl}
-                  onChange={(e) => setTrainVideoUrl(e.target.value)}
-                  placeholder="Enter video URL"
-                  className="flex-1"
-                />
-                <Button
-                  variant="outline"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading}
-                >
-                  <Upload className="h-4 w-4 mr-2" />
-                  Upload
-                </Button>
-              </div>
-              
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="video/*"
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-              
-              {trainVideoFile && (
-                <div className="text-sm text-muted-foreground">
-                  Selected: {trainVideoFile.name} ({(trainVideoFile.size / 1024 / 1024).toFixed(2)} MB)
-                </div>
-              )}
-              
-              {isUploading && (
-                <div className="space-y-2">
-                  <Progress value={uploadProgress} />
-                  <div className="text-sm text-muted-foreground">
-                    Uploading... {uploadProgress}%
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <Button
-            onClick={handleCreateReplica}
-            disabled={createReplicaMutation.isPending || isUploading}
-            className="w-full"
-          >
-            {createReplicaMutation.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Creating Replica...
-              </>
-            ) : (
-              <>
-                <User className="h-4 w-4 mr-2" />
-                Create Replica
-              </>
-            )}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Stock Replicas */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Star className="h-5 w-5" />
-            Stock Replicas
-          </CardTitle>
-          <CardDescription>
-            Pre-trained avatars ready to use
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {stockReplicasLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
-              <span className="ml-2">Loading stock replicas...</span>
-            </div>
-          ) : stockReplicasError ? (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Failed to load stock replicas</AlertDescription>
-            </Alert>
-          ) : stockReplicas && stockReplicas.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {stockReplicas.map((replica) => (
-                <Card key={replica.replica_id} className="cursor-pointer hover:shadow-md transition-shadow">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-medium">{replica.replica_name}</h4>
-                      <Badge className={getStatusColor(replica.status)}>
-                        {replica.status}
-                      </Badge>
-                    </div>
-                    {replica.avatar_url && (
-                      <div className="mb-3">
-                        <img
-                          src={replica.avatar_url}
-                          alt={replica.replica_name}
-                          className="w-full h-32 object-cover rounded"
-                        />
-                      </div>
-                    )}
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setSelectedStockReplica(replica)}
-                        className="flex-1"
-                      >
-                        <Eye className="h-3 w-3 mr-1" />
-                        Preview
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-muted-foreground">
-              No stock replicas available
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* User Replicas */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <User className="h-5 w-5" />
-            Your Replicas
-          </CardTitle>
-          <CardDescription>
-            Custom replicas you've created
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {userReplicasLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
-              <span className="ml-2">Loading your replicas...</span>
-            </div>
-          ) : userReplicasError ? (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>Failed to load your replicas</AlertDescription>
-            </Alert>
-          ) : userReplicas && userReplicas.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {userReplicas.map((replica) => (
-                <Card key={replica.replica_id} className="cursor-pointer hover:shadow-md transition-shadow">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-medium">{replica.replica_name}</h4>
-                      <Badge className={getStatusColor(replica.status)}>
-                        {replica.status}
-                      </Badge>
-                    </div>
-                    
-                    {replica.status === 'training' && (
-                      <div className="mb-3">
-                        <div className="text-sm text-muted-foreground mb-1">
-                          Training Progress: {replica.training_progress}
-                        </div>
-                        <Progress value={parseInt(replica.training_progress)} />
-                      </div>
-                    )}
-                    
-                    {replica.error_message && (
-                      <Alert variant="destructive" className="mb-3">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription className="text-xs">
-                          {replica.error_message}
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                    
-                    {replica.avatar_url && (
-                      <div className="mb-3">
-                        <img
-                          src={replica.avatar_url}
-                          alt={replica.replica_name}
-                          className="w-full h-32 object-cover rounded"
-                        />
-                      </div>
-                    )}
-                    
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={replica.status !== 'ready'}
-                        className="flex-1"
-                      >
-                        <Eye className="h-3 w-3 mr-1" />
-                        Preview
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => handleDeleteReplica(replica.replica_id)}
-                        disabled={deleteReplicaMutation.isPending}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-muted-foreground">
-              No replicas created yet. Create your first replica above!
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  // Render videos tab
-  const renderVideosTab = () => (
-    <div className="space-y-6">
-      {/* Create New Video */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Plus className="h-5 w-5" />
-            Generate New Video
-          </CardTitle>
-          <CardDescription>
-            Create a personalized video using your replicas
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="video-replica">Select Replica</Label>
-            <Select value={selectedReplicaId} onValueChange={setSelectedReplicaId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Choose a replica" />
-              </SelectTrigger>
-              <SelectContent>
-                {getAllReplicas().map((replica) => (
-                  <SelectItem key={replica.replica_id} value={replica.replica_id}>
-                    {replica.replica_name} {replica.is_stock ? '(Stock)' : '(Custom)'}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="video-name">Video Name</Label>
-            <Input
-              id="video-name"
-              value={videoName}
-              onChange={(e) => setVideoName(e.target.value)}
-              placeholder="Enter a name for your video"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="video-script">Script</Label>
-            <Textarea
-              id="video-script"
-              value={videoScript}
-              onChange={(e) => setVideoScript(e.target.value)}
-              placeholder="Enter the script for your video..."
-              rows={6}
-            />
-            <div className="text-xs text-muted-foreground">
-              {videoScript.length} characters
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="background-url">Background URL (Optional)</Label>
-            <Input
-              id="background-url"
-              value={backgroundUrl}
-              onChange={(e) => setBackgroundUrl(e.target.value)}
-              placeholder="Enter background image/video URL"
-            />
-          </div>
-
-          <Button
-            onClick={handleCreateVideo}
-            disabled={createVideoMutation.isPending || !selectedReplicaId || !videoScript.trim() || !videoName.trim()}
-            className="w-full"
-          >
-            {createVideoMutation.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Generating Video...
-              </>
-            ) : (
-              <>
-                <Video className="h-4 w-4 mr-2" />
-                Generate Video
-              </>
-            )}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Generated Videos */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Video className="h-5 w-5" />
-            Your Videos
-          </CardTitle>
-          <CardDescription>
-            Videos you've generated
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {videosLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
-              <span className="ml-2">Loading videos...</span>
-            </div>
-          ) : videos && videos.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {videos.map((video) => (
-                <Card key={video.video_id} className="cursor-pointer hover:shadow-md transition-shadow">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-medium">{video.video_name}</h4>
-                      <Badge className={getStatusColor(video.status)}>
-                        {video.status}
-                      </Badge>
-                    </div>
-                    
-                    <div className="text-sm text-muted-foreground mb-3">
-                      Created: {new Date(video.created_at).toLocaleDateString()}
-                    </div>
-                    
-                    {video.status === 'generating' && (
-                      <div className="mb-3">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Clock className="h-3 w-3" />
-                          Video is being generated...
-                        </div>
-                      </div>
-                    )}
-                    
-                    {video.status === 'ready' && (
-                      <div className="flex gap-2">
-                        {video.hosted_url && (
-                          <Button size="sm" variant="outline" asChild className="flex-1">
-                            <a href={video.hosted_url} target="_blank" rel="noopener noreferrer">
-                              <Play className="h-3 w-3 mr-1" />
-                              Watch
-                            </a>
-                          </Button>
-                        )}
-                        {video.download_url && (
-                          <Button size="sm" variant="outline" asChild>
-                            <a href={video.download_url} download>
-                              <Download className="h-3 w-3" />
-                            </a>
-                          </Button>
-                        )}
-                      </div>
-                    )}
-                    
-                    {video.status === 'error' && (
-                      <Alert variant="destructive">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription className="text-xs">
-                          Video generation failed
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-muted-foreground">
-              No videos generated yet. Create your first video above!
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  // Render personas tab
-  const renderPersonasTab = () => (
-    <div className="space-y-6">
-      {/* Create New Persona */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Plus className="h-5 w-5" />
-            Create New Persona
-          </CardTitle>
-          <CardDescription>
-            Define a custom AI personality for your avatars
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="persona-name">Persona Name</Label>
-            <Input
-              id="persona-name"
-              value={personaName}
-              onChange={(e) => setPersonaName(e.target.value)}
-              placeholder="Enter persona name"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="system-prompt">System Prompt</Label>
-            <Textarea
-              id="system-prompt"
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              placeholder="Define the personality and behavior..."
-              rows={4}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="persona-context">Context</Label>
-            <Textarea
-              id="persona-context"
-              value={personaContext}
-              onChange={(e) => setPersonaContext(e.target.value)}
-              placeholder="Provide additional context and background..."
-              rows={3}
-            />
-          </div>
-
-          <Button
-            onClick={handleCreatePersona}
-            disabled={createPersonaMutation.isPending}
-            className="w-full"
-          >
-            {createPersonaMutation.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Creating Persona...
-              </>
-            ) : (
-              <>
-                <Zap className="h-4 w-4 mr-2" />
-                Create Persona
-              </>
-            )}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Stock Personas */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Star className="h-5 w-5" />
-            Stock Personas
-          </CardTitle>
-          <CardDescription>
-            Pre-built personalities ready to use
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {stockPersonas && stockPersonas.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {stockPersonas.map((persona) => (
-                <Card key={persona.persona_id} className="cursor-pointer hover:shadow-md transition-shadow">
-                  <CardContent className="p-4">
-                    <h4 className="font-medium mb-2">{persona.name}</h4>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      {persona.description}
-                    </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setSelectedPersona(persona)}
-                      className="w-full"
-                    >
-                      <Eye className="h-3 w-3 mr-1" />
-                      View Details
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-muted-foreground">
-              No stock personas available
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* User Personas */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Zap className="h-5 w-5" />
-            Your Personas
-          </CardTitle>
-          <CardDescription>
-            Custom personas you've created
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {userPersonasLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
-              <span className="ml-2">Loading personas...</span>
-            </div>
-          ) : userPersonas && userPersonas.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {userPersonas.map((persona) => (
-                <Card key={persona.persona_id} className="cursor-pointer hover:shadow-md transition-shadow">
-                  <CardContent className="p-4">
-                    <h4 className="font-medium mb-2">{persona.persona_name}</h4>
-                    <p className="text-sm text-muted-foreground mb-3 line-clamp-3">
-                      {persona.context}
-                    </p>
-                    <div className="text-xs text-muted-foreground mb-3">
-                      Created: {new Date(persona.created_at).toLocaleDateString()}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setSelectedPersona(persona)}
-                      className="w-full"
-                    >
-                      <Eye className="h-3 w-3 mr-1" />
-                      View Details
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-muted-foreground">
-              No personas created yet. Create your first persona above!
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
+  // Show connection interface if not connected
+  if (!isTavusConnected) {
+    return <TavusConnect onConnectionSuccess={handleConnectionSuccess} />;
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h2 className="text-3xl font-bold tracking-tight">AI Avatar Constructor</h2>
-        <p className="text-muted-foreground">
-          Create and manage AI-powered video avatars for personalized lead nurturing
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold mb-2">AI Avatar Constructor</h2>
+          <p className="text-muted-foreground">
+            Create and manage AI avatars using Tavus technology for lead nurturing and customer engagement.
+          </p>
+        </div>
+
       </div>
 
-      {/* Status Messages */}
-      {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
 
-      {success && (
-        <Alert>
-          <CheckCircle className="h-4 w-4" />
-          <AlertDescription>{success}</AlertDescription>
-        </Alert>
-      )}
 
-      {/* Main Content */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="replicas" className="flex items-center gap-2">
-            <User className="h-4 w-4" />
-            Replicas
-          </TabsTrigger>
-          <TabsTrigger value="videos" className="flex items-center gap-2">
-            <Video className="h-4 w-4" />
-            Videos
-          </TabsTrigger>
-          <TabsTrigger value="personas" className="flex items-center gap-2">
-            <Zap className="h-4 w-4" />
-            Personas
-          </TabsTrigger>
+          <TabsTrigger value="replicas">Replicas</TabsTrigger>
+          <TabsTrigger value="videos">Videos</TabsTrigger>
+          <TabsTrigger value="personas">Personas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="replicas" className="space-y-4">
-          {renderReplicasTab()}
+          {/* Template Gallery */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                🎭 Ready Templates
+                <Badge variant="secondary">Instant Use</Badge>
+              </CardTitle>
+              <CardDescription>
+                Professional AI avatars ready to use immediately. No training required - just write your script and generate videos.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoadingStockReplicas ? (
+                <div className="flex items-center justify-center py-8">
+                  <RefreshCw className="h-6 w-6 animate-spin" />
+                </div>
+              ) : stockReplicas.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <User className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No templates available</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {stockReplicas.map((replica) => (
+                    <div 
+                      key={replica.replica_id} 
+                      className={`border rounded-lg p-4 cursor-pointer transition-all hover:shadow-md ${
+                        selectedReplica === replica.replica_id ? 'ring-2 ring-primary' : ''
+                      }`}
+                      onClick={() => setSelectedReplica(replica.replica_id)}
+                    >
+                      <div className="aspect-square bg-muted rounded-lg mb-3 flex items-center justify-center overflow-hidden relative">
+                        {replica.avatar_url ? (
+                          <>
+                            <video 
+                              key={replica.replica_id}
+                              src={replica.avatar_url} 
+                              className="w-full h-full object-cover rounded-lg"
+                              autoPlay
+                              loop
+                              muted
+                              playsInline
+                              preload="metadata"
+                              onLoadedData={(e) => {
+                                // Video loaded successfully, hide placeholder
+                                console.log('✅ Video loaded successfully:', replica.replica_name, replica.avatar_url);
+                                const target = e.target as HTMLVideoElement;
+                                const placeholder = target.nextElementSibling as HTMLElement;
+                                if (placeholder) placeholder.style.display = 'none';
+                              }}
+                              onError={(e) => {
+                                // If video fails to load, show placeholder
+                                console.log('❌ Video failed to load:', replica.replica_name, replica.avatar_url);
+                                const target = e.target as HTMLVideoElement;
+                                target.style.display = 'none';
+                                const placeholder = target.nextElementSibling as HTMLElement;
+                                if (placeholder) placeholder.style.display = 'flex';
+                              }}
+                              onCanPlay={() => {
+                                console.log('🎬 Video can play:', replica.replica_name);
+                              }}
+                            />
+                            <div className="flex items-center justify-center w-full h-full bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950 absolute inset-0 rounded-lg">
+                              <div className="text-center">
+                                <div className="w-16 h-16 bg-white dark:bg-gray-800 rounded-full flex items-center justify-center mb-2 mx-auto shadow-sm">
+                                  <User className="h-8 w-8 text-blue-500" />
+                                </div>
+                                <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Loading...</span>
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex items-center justify-center w-full h-full bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950">
+                            <div className="text-center">
+                              <div className="w-16 h-16 bg-white dark:bg-gray-800 rounded-full flex items-center justify-center mb-2 mx-auto shadow-sm">
+                                <User className="h-8 w-8 text-blue-500" />
+                              </div>
+                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">AI Avatar</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <h4 className="font-medium text-sm mb-1">{replica.replica_name}</h4>
+                      <p className="text-xs text-muted-foreground mb-2 font-mono">ID: {replica.replica_id}</p>
+                      <div className="flex gap-1">
+                        <Badge variant="outline" className="text-xs">
+                          Ready to Use
+                        </Badge>
+                        {replica.status === 'deprecated' && (
+                          <Badge variant="destructive" className="text-xs">
+                            Deprecated
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Create New Replica */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Camera className="h-5 w-5" />
+                  Create New Replica
+                </CardTitle>
+                <CardDescription>
+                  Upload a training video to create your AI replica. The video should include the consent statement.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Alert>
+                  <AlertDescription>
+                    <strong>Required consent statement:</strong> &quot;I, [FULL NAME], am currently speaking and consent Tavus to create an AI clone of me by using the audio and video samples I provide.&quot;
+                  </AlertDescription>
+                </Alert>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="replica-name">Replica Name</Label>
+                  <Input
+                    id="replica-name"
+                    placeholder="Enter replica name"
+                    value={replicaName}
+                    onChange={(e) => setReplicaName(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="video-upload">Training Video</Label>
+                  <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-6 text-center">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="video/*"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                    {videoFile ? (
+                      <div className="space-y-2">
+                        <Video className="h-8 w-8 mx-auto text-primary" />
+                        <p className="text-sm font-medium">{videoFile.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {(videoFile.size / (1024 * 1024)).toFixed(2)} MB
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
+                        <p className="text-sm text-muted-foreground">
+                          Click to upload training video
+                        </p>
+                      </div>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      {videoFile ? 'Change Video' : 'Upload Video'}
+                    </Button>
+                  </div>
+                </div>
+
+                <Button 
+                  onClick={handleCreateReplica}
+                  disabled={!videoUrl || !replicaName || createReplicaMutation.isPending}
+                  className="w-full"
+                >
+                  {createReplicaMutation.isPending ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Creating Replica...
+                    </>
+                  ) : (
+                    <>
+                      <User className="h-4 w-4 mr-2" />
+                      Create Replica
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Existing Replicas */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Your Replicas</CardTitle>
+                <CardDescription>
+                  Manage your existing AI replicas
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoadingReplicas ? (
+                  <div className="flex items-center justify-center py-8">
+                    <RefreshCw className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : replicas.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <User className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No replicas created yet</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {replicas.map((replica) => (
+                      <div key={replica.replica_id} className="border rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <h4 className="font-medium">{replica.replica_name}</h4>
+                            <p className="text-xs text-muted-foreground font-mono">ID: {replica.replica_id}</p>
+                          </div>
+                          <div className="flex gap-1">
+                            <Badge className={getStatusColor(replica.status)}>
+                              {replica.status}
+                            </Badge>
+                            {replica.status === 'deprecated' && (
+                              <Badge variant="destructive" className="text-xs">
+                                Deprecated
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                        {replica.status === 'training' && (
+                          <div className="text-xs text-muted-foreground">
+                            Progress: {replica.training_progress}
+                          </div>
+                        )}
+                        {replica.error_message && (
+                          <div className="text-xs text-red-600 mt-1">
+                            {replica.error_message}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="videos" className="space-y-4">
-          {renderVideosTab()}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Create Video */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Video className="h-5 w-5" />
+                  Generate Video
+                </CardTitle>
+                <CardDescription>
+                  Create a personalized video using your replica and a script
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="replica-select">Select Replica</Label>
+                  <Select value={selectedReplica} onValueChange={setSelectedReplica}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a replica or template" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {readyReplicas.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">
+                          No replicas available. Create one or use templates.
+                        </div>
+                      ) : (
+                        <>
+                          {/* Stock Replicas (Templates) */}
+                          {stockReplicas.length > 0 && (
+                            <>
+                              <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                Templates (Ready to Use)
+                              </div>
+                              {stockReplicas.map((replica) => (
+                                <SelectItem 
+                                  key={replica.replica_id} 
+                                  value={replica.replica_id}
+                                  disabled={replica.status === 'deprecated'}
+                                >
+                                  🎭 {replica.replica_name} ({replica.replica_id})
+                                  {replica.status === 'deprecated' && ' - DEPRECATED'}
+                                </SelectItem>
+                              ))}
+                            </>
+                          )}
+                          
+                          {/* User Replicas */}
+                          {replicas.filter(r => r.status === 'ready').length > 0 && (
+                            <>
+                              <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-t">
+                                Your Custom Replicas
+                              </div>
+                              {replicas.filter(r => r.status === 'ready').map((replica) => (
+                                <SelectItem key={replica.replica_id} value={replica.replica_id}>
+                                  👤 {replica.replica_name} ({replica.replica_id})
+                                </SelectItem>
+                              ))}
+                            </>
+                          )}
+                        </>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="video-name-input">Video Name</Label>
+                  <Input
+                    id="video-name-input"
+                    placeholder="Enter video name"
+                    value={videoName}
+                    onChange={(e) => setVideoName(e.target.value)}
+                  />
+                </div>
+
+                {/* Show selected replica/template info */}
+                {selectedReplica && (
+                  <div className="p-3 bg-muted rounded-lg">
+                    {(() => {
+                      const selectedReplicaData = readyReplicas.find(r => r.replica_id === selectedReplica);
+                      if (!selectedReplicaData) return null;
+                      
+                      return (
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 bg-background rounded-lg flex items-center justify-center overflow-hidden relative">
+                            {selectedReplicaData.avatar_url ? (
+                              <>
+                                <video 
+                                  src={selectedReplicaData.avatar_url} 
+                                  className="w-full h-full object-cover rounded-lg"
+                                  autoPlay
+                                  loop
+                                  muted
+                                  playsInline
+                                  preload="metadata"
+                                  onLoadedData={(e) => {
+                                    // Video loaded successfully, hide placeholder
+                                    const target = e.target as HTMLVideoElement;
+                                    const placeholder = target.nextElementSibling as HTMLElement;
+                                    if (placeholder) placeholder.style.display = 'none';
+                                  }}
+                                  onError={(e) => {
+                                    const target = e.target as HTMLVideoElement;
+                                    target.style.display = 'none';
+                                    const placeholder = target.nextElementSibling as HTMLElement;
+                                    if (placeholder) placeholder.style.display = 'flex';
+                                  }}
+                                />
+                                <div className="flex items-center justify-center w-full h-full bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950 rounded-lg absolute inset-0">
+                                  {selectedReplicaData.is_stock ? (
+                                    <span className="text-lg">🎭</span>
+                                  ) : (
+                                    <span className="text-lg">👤</span>
+                                  )}
+                                </div>
+                              </>
+                            ) : (
+                              <div className="flex items-center justify-center w-full h-full bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950 rounded-lg">
+                                {selectedReplicaData.is_stock ? (
+                                  <span className="text-lg">🎭</span>
+                                ) : (
+                                  <span className="text-lg">👤</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <p className="font-medium text-sm">
+                              {selectedReplicaData.replica_name}
+                            </p>
+                            <p className="text-xs text-muted-foreground font-mono">
+                              ID: {selectedReplicaData.replica_id}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {selectedReplicaData.is_stock ? 'Template - Ready to use' : 'Your custom replica'}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="script-input">Script</Label>
+                  <Textarea
+                    id="script-input"
+                    placeholder="Enter the text you want your AI avatar to speak..."
+                    value={script}
+                    onChange={(e) => setScript(e.target.value)}
+                    rows={6}
+                  />
+                </div>
+
+                <Button 
+                  onClick={handleCreateVideo}
+                  disabled={!selectedReplica || !script || !videoName || createVideoMutation.isPending}
+                  className="w-full"
+                >
+                  {createVideoMutation.isPending ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Generating Video...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-4 w-4 mr-2" />
+                      Generate Video
+                    </>
+                  )}
+                </Button>
+                
+                {createVideoMutation.isSuccess && (
+                  <Alert className="mt-4 border-green-200 bg-green-50 text-green-800">
+                    <AlertDescription className="text-sm">
+                      <strong>Video Generation Started!</strong> Your video is being created and will appear in the &quot;Generated Videos&quot; section below when ready. This usually takes 2-5 minutes.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                
+                {createVideoMutation.error && (
+                  <Alert className="mt-4 border-red-200 bg-red-50 text-red-800">
+                    <AlertDescription className="text-sm">
+                      <strong>Video Creation Failed:</strong> {createVideoMutation.error.message}
+                      {createVideoMutation.error.message.includes('Payment Required') && (
+                        <div className="mt-2">
+                          <a 
+                            href="https://app.tavus.io/billing" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-800 underline font-medium"
+                          >
+                            → Add credits to your Tavus account
+                          </a>
+                        </div>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Generated Videos */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Generated Videos</CardTitle>
+                <CardDescription>
+                  Your AI-generated videos
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoadingVideos ? (
+                  <div className="flex items-center justify-center py-8">
+                    <RefreshCw className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : videos.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Video className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No videos generated yet</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {videos.map((video: TavusVideo) => (
+                      <div key={video.video_id} className="border rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="font-medium">{video.video_name}</h4>
+                          <Badge className={getStatusColor(video.status)}>
+                            {video.status}
+                          </Badge>
+                        </div>
+                        {video.status === 'ready' && video.hosted_url && (
+                          <div className="flex gap-2 mt-2">
+                            <Button size="sm" variant="outline" asChild>
+                              <a href={video.hosted_url} target="_blank" rel="noopener noreferrer">
+                                <ExternalLink className="h-3 w-3 mr-1" />
+                                View
+                              </a>
+                            </Button>
+                            {video.download_url && (
+                              <Button size="sm" variant="outline" asChild>
+                                <a href={video.download_url} download>
+                                  <Download className="h-3 w-3 mr-1" />
+                                  Download
+                                </a>
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="personas" className="space-y-4">
-          {renderPersonasTab()}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {isLoadingStockPersonas ? (
+              <div className="col-span-full flex items-center justify-center py-8">
+                <RefreshCw className="h-6 w-6 animate-spin" />
+              </div>
+            ) : (
+              stockPersonas.map((persona) => (
+                <Card key={persona.persona_id} className="cursor-pointer hover:shadow-md transition-shadow">
+                  <CardHeader>
+                    <CardTitle className="text-lg">{persona.name}</CardTitle>
+                    <CardDescription>{persona.description}</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground line-clamp-3">
+                      {persona.system_prompt}
+                    </p>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </div>
         </TabsContent>
       </Tabs>
     </div>
   );
-}
+} 
