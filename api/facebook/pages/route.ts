@@ -1,246 +1,297 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { FacebookService } from '@/lib/services/facebook-service';
+
+interface FacebookPageData {
+  id: string;
+  name: string;
+  category?: string;
+  category_list?: Array<{ name: string }>;
+  source: string;
+  username?: string;
+  connected_page_id?: string;
+  connected_page_name?: string;
+}
 
 export async function GET(request: NextRequest) {
   try {
+    console.log('=== PAGES API AUTHENTICATION DEBUG ===');
+    console.log('Request cookies:', request.cookies.getAll().map(c => c.name));
+    console.log('Request headers:', Object.fromEntries(request.headers.entries()));
+
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    console.log('Supabase auth result:', { user: user?.id, error: authError?.message });
+
+    if (authError || !user) {
+      console.log('❌ Authentication failed:', authError?.message);
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    console.log('✅ Authentication successful for user:', user.id);
+
     const { searchParams } = new URL(request.url);
     const adAccountId = searchParams.get('adAccountId');
 
-    console.log('🔍 Facebook Pages API: Starting request for ad account:', adAccountId);
+    console.log('📋 Request parameters:', { adAccountId });
 
     if (!adAccountId) {
-      return NextResponse.json(
-        { error: 'Ad account ID is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Ad account ID is required' }, { status: 400 });
     }
 
-    const supabase = await createClient();
-    
-    // Get authenticated user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
-    if (userError || !user) {
-      console.log('❌ Authentication failed:', userError);
-      return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
-      );
+    console.log('🔍 Looking up access token and ad account in database...');
+
+    // First, get the user's access token from facebook_tokens table
+    const { data: tokenData, error: tokenError } = await supabase
+      .from('facebook_tokens')
+      .select('access_token, expires_at, has_ad_permissions')
+      .eq('user_id', user.id)
+      .single();
+
+    console.log('🔑 Token lookup result:', {
+      found: !!tokenData,
+      error: tokenError?.message,
+      hasToken: !!tokenData?.access_token,
+      hasAdPermissions: tokenData?.has_ad_permissions,
+      expiresAt: tokenData?.expires_at
+    });
+
+    if (tokenError || !tokenData?.access_token) {
+      console.log('❌ No valid access token found');
+      return NextResponse.json({ 
+        error: 'No Facebook access token found. Please reconnect your Facebook account.',
+        details: tokenError?.message
+      }, { status: 403 });
     }
 
-    console.log('✅ User authenticated:', user.id);
+    // Check if token is expired
+    const now = new Date();
+    const expiresAt = new Date(tokenData.expires_at);
+    if (now >= expiresAt) {
+      console.log('❌ Access token expired');
+      return NextResponse.json({ 
+        error: 'Facebook access token has expired. Please reconnect your Facebook account.'
+      }, { status: 403 });
+    }
 
-    // Verify user owns this ad account
-    const { data: adAccount, error: adAccountError } = await supabase
+    // Then, verify the ad account exists and belongs to the user
+    const { data: adAccountData, error: adAccountError } = await supabase
       .from('facebook_ad_accounts')
-      .select('id, name')
+      .select('id, name, account_id')
       .eq('id', adAccountId)
       .eq('user_id', user.id)
       .single();
 
-    if (adAccountError || !adAccount) {
-      console.log('❌ Ad account verification failed:', adAccountError);
-      return NextResponse.json(
-        { error: 'Ad account not found or access denied' },
-        { status: 403 }
-      );
+    console.log('🏢 Ad account lookup result:', {
+      found: !!adAccountData,
+      error: adAccountError?.message,
+      accountId: adAccountData?.account_id
+    });
+
+    if (adAccountError || !adAccountData) {
+      console.log('❌ Ad account access denied:', adAccountError?.message);
+      return NextResponse.json({ 
+        error: 'Ad account not found or access denied',
+        details: adAccountError?.message
+      }, { status: 403 });
     }
 
-    console.log('✅ Ad account verified:', adAccount.name);
+    console.log('✅ Access token and ad account verified successfully');
+    console.log('🚀 Making Facebook API calls...');
 
-    // Get Facebook access token
-    const facebookService = new FacebookService(supabase);
-    const accessToken = await facebookService.getAccessToken(user.id);
-    
-    if (!accessToken) {
-      console.log('❌ No Facebook access token found');
-      return NextResponse.json(
-        { error: 'Facebook account not connected' },
-        { status: 401 }
-      );
-    }
+    const accessToken = tokenData.access_token;
+    const pages: FacebookPageData[] = [];
+    const errors: string[] = [];
 
-    console.log('✅ Facebook access token retrieved');
-
-    // Initialize response structure
-    const response = {
-      facebook_pages: [],
-      instagram_accounts: [],
-      total_facebook_pages: 0,
-      total_instagram_accounts: 0,
-      has_more_facebook_pages: false,
-      has_more_instagram_accounts: false,
-      default_facebook_page: null,
-      default_instagram_account: null,
-      debug_info: {
-        methods_tried: [],
-        errors_encountered: [],
-        sources: {}
-      }
-    };
-
-    // Method 1: Try promote_pages endpoint
-    console.log('🔍 Method 1: Trying promote_pages endpoint');
+    // Method 1: Get promote pages (pages that can be promoted by this ad account)
     try {
-      const promoteUrl = `https://graph.facebook.com/v23.0/${adAccountId}/promote_pages?access_token=${accessToken}&fields=id,name,category`;
-      console.log('📡 Fetching from promote_pages:', promoteUrl);
-      
-      const promoteResponse = await fetch(promoteUrl);
-      response.debug_info.methods_tried.push('promote_pages');
-      
+      console.log('📄 Trying Method 1: /promote_pages endpoint...');
+      const promoteResponse = await fetch(
+        `https://graph.facebook.com/v23.0/${adAccountId}/promote_pages?access_token=${accessToken}`,
+        { method: 'GET' }
+      );
+
+      console.log('📄 Promote pages response status:', promoteResponse.status);
+
       if (promoteResponse.ok) {
         const promoteData = await promoteResponse.json();
-        console.log('✅ promote_pages response:', promoteData);
+        console.log('📄 Promote pages data:', promoteData);
         
         if (promoteData.data && Array.isArray(promoteData.data)) {
-          const pages = promoteData.data.map(page => ({
-            id: page.id,
-            name: page.name,
-            category: page.category || 'Unknown',
-            type: 'facebook_page'
-          }));
-          
-          response.facebook_pages.push(...pages);
-          response.debug_info.sources.promote_pages = pages.length;
-          console.log(`✅ Found ${pages.length} pages from promote_pages`);
+          pages.push(...promoteData.data.map((page: FacebookPageData) => ({
+            ...page,
+            source: 'promote_pages'
+          })));
+          console.log('✅ Found', promoteData.data.length, 'promote pages');
         }
       } else {
-        const errorData = await promoteResponse.json();
-        console.log('❌ promote_pages failed:', errorData);
-        response.debug_info.errors_encountered.push({
-          method: 'promote_pages',
-          error: errorData.error?.message || 'Unknown error'
-        });
+        const errorText = await promoteResponse.text();
+        console.log('❌ Promote pages error:', errorText);
+        errors.push(`Promote pages: ${errorText}`);
       }
     } catch (error) {
-      console.log('❌ promote_pages exception:', error);
-      response.debug_info.errors_encountered.push({
-        method: 'promote_pages',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
+      console.log('❌ Promote pages exception:', error);
+      errors.push(`Promote pages exception: ${error}`);
     }
 
-    // Method 2: Try user accounts endpoint
-    console.log('🔍 Method 2: Trying user accounts endpoint');
+    // Method 2: Get user's pages (fallback)
     try {
-      const accountsUrl = `https://graph.facebook.com/v23.0/me/accounts?access_token=${accessToken}&fields=id,name,category,access_token`;
-      console.log('📡 Fetching from user accounts:', accountsUrl);
-      
-      const accountsResponse = await fetch(accountsUrl);
-      response.debug_info.methods_tried.push('user_accounts');
-      
+      console.log('📄 Trying Method 2: /me/accounts endpoint...');
+      const accountsResponse = await fetch(
+        `https://graph.facebook.com/v23.0/me/accounts?access_token=${accessToken}`,
+        { method: 'GET' }
+      );
+
+      console.log('📄 User accounts response status:', accountsResponse.status);
+
       if (accountsResponse.ok) {
         const accountsData = await accountsResponse.json();
-        console.log('✅ user accounts response:', accountsData);
+        console.log('📄 User accounts data:', accountsData);
         
         if (accountsData.data && Array.isArray(accountsData.data)) {
-          const pages = accountsData.data.map(page => ({
-            id: page.id,
-            name: page.name,
-            category: page.category || 'Unknown',
-            type: 'facebook_page'
-          }));
-          
-          // Merge with existing pages (avoid duplicates)
-          const existingIds = new Set(response.facebook_pages.map(p => p.id));
-          const newPages = pages.filter(p => !existingIds.has(p.id));
-          
-          response.facebook_pages.push(...newPages);
-          response.debug_info.sources.user_accounts = newPages.length;
-          console.log(`✅ Found ${newPages.length} new pages from user accounts`);
+          // Filter for pages only
+          const userPages = accountsData.data.filter((account: FacebookPageData) => 
+            account.category_list || account.category
+          );
+          pages.push(...userPages.map((page: FacebookPageData) => ({
+            ...page,
+            source: 'user_accounts'
+          })));
+          console.log('✅ Found', userPages.length, 'user pages');
         }
       } else {
-        const errorData = await accountsResponse.json();
-        console.log('❌ user accounts failed:', errorData);
-        response.debug_info.errors_encountered.push({
-          method: 'user_accounts',
-          error: errorData.error?.message || 'Unknown error'
-        });
+        const errorText = await accountsResponse.text();
+        console.log('❌ User accounts error:', errorText);
+        errors.push(`User accounts: ${errorText}`);
       }
     } catch (error) {
-      console.log('❌ user accounts exception:', error);
-      response.debug_info.errors_encountered.push({
-        method: 'user_accounts',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
+      console.log('❌ User accounts exception:', error);
+      errors.push(`User accounts exception: ${error}`);
     }
 
-    // Method 3: Try Instagram accounts
-    console.log('🔍 Method 3: Trying Instagram accounts');
+    // Method 3: Get Instagram accounts (additional)
     try {
-      const instagramUrl = `https://graph.facebook.com/v23.0/me/accounts?access_token=${accessToken}&fields=id,name,instagram_business_account{id,name,username,profile_picture_url,followers_count,media_count}`;
-      console.log('📡 Fetching Instagram accounts:', instagramUrl);
-      
-      const instagramResponse = await fetch(instagramUrl);
-      response.debug_info.methods_tried.push('instagram_accounts');
-      
+      console.log('📄 Trying Method 3: /me/instagram_accounts endpoint...');
+      const instagramResponse = await fetch(
+        `https://graph.facebook.com/v23.0/me/instagram_accounts?access_token=${accessToken}`,
+        { method: 'GET' }
+      );
+
+      console.log('📄 Instagram accounts response status:', instagramResponse.status);
+
       if (instagramResponse.ok) {
         const instagramData = await instagramResponse.json();
-        console.log('✅ Instagram accounts response:', instagramData);
+        console.log('📄 Instagram accounts data:', instagramData);
         
         if (instagramData.data && Array.isArray(instagramData.data)) {
-          for (const page of instagramData.data) {
-            if (page.instagram_business_account) {
-              const igAccount = page.instagram_business_account;
-              response.instagram_accounts.push({
-                id: igAccount.id,
-                name: igAccount.name || igAccount.username,
-                username: igAccount.username,
-                type: 'instagram_account',
-                connected_facebook_page: page.id,
-                profile_picture_url: igAccount.profile_picture_url,
-                followers_count: igAccount.followers_count,
-                media_count: igAccount.media_count
-              });
-            }
-          }
-          
-          response.debug_info.sources.instagram = response.instagram_accounts.length;
-          console.log(`✅ Found ${response.instagram_accounts.length} Instagram accounts`);
+          pages.push(...instagramData.data.map((account: FacebookPageData) => ({
+            ...account,
+            source: 'instagram_accounts',
+            name: account.name || account.username || 'Instagram Account'
+          })));
+          console.log('✅ Found', instagramData.data.length, 'Instagram accounts');
         }
       } else {
-        const errorData = await instagramResponse.json();
-        console.log('❌ Instagram accounts failed:', errorData);
-        response.debug_info.errors_encountered.push({
-          method: 'instagram_accounts',
-          error: errorData.error?.message || 'Unknown error'
-        });
+        const errorText = await instagramResponse.text();
+        console.log('❌ Instagram accounts error:', errorText);
+        errors.push(`Instagram accounts: ${errorText}`);
       }
     } catch (error) {
       console.log('❌ Instagram accounts exception:', error);
-      response.debug_info.errors_encountered.push({
-        method: 'instagram_accounts',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
+      errors.push(`Instagram accounts exception: ${error}`);
     }
 
-    // Set totals and defaults
-    response.total_facebook_pages = response.facebook_pages.length;
-    response.total_instagram_accounts = response.instagram_accounts.length;
-    
-    if (response.facebook_pages.length > 0) {
-      response.default_facebook_page = response.facebook_pages[0].id;
-    }
-    
-    if (response.instagram_accounts.length > 0) {
-      response.default_instagram_account = response.instagram_accounts[0].id;
-    }
-
-    console.log('📊 Final response summary:', {
-      facebook_pages: response.total_facebook_pages,
-      instagram_accounts: response.total_instagram_accounts,
-      methods_tried: response.debug_info.methods_tried.length,
-      errors: response.debug_info.errors_encountered.length
+    console.log('📊 Final results:', {
+      totalPages: pages.length,
+      totalErrors: errors.length,
+      pagesSources: pages.map(p => p.source)
     });
 
-    return NextResponse.json(response);
+    if (pages.length === 0) {
+      return NextResponse.json({
+        error: 'No pages found',
+        details: 'Could not fetch any Facebook pages or Instagram accounts.',
+        troubleshooting: {
+          errors,
+          suggestions: [
+            'Make sure you have Facebook pages connected to your account',
+            'Verify that your Facebook app has the required permissions:',
+            '  - ads_management (for promote_pages)',
+            '  - pages_show_list (for user pages)',
+            '  - instagram_basic (for Instagram accounts)',
+            'Try reconnecting your Facebook account to refresh permissions'
+          ]
+        }
+      }, { status: 404 });
+    }
+
+    // Remove duplicates based on ID
+    const uniquePages = pages.filter((page, index, self) => 
+      index === self.findIndex(p => p.id === page.id)
+    );
+
+    console.log('✅ Successfully fetched', uniquePages.length, 'unique pages');
+
+    // Separate Facebook pages and Instagram accounts
+    const facebookPages = uniquePages
+      .filter(page => page.source !== 'instagram_accounts')
+      .map(page => ({
+        id: page.id,
+        name: page.name,
+        category: page.category || page.category_list?.[0]?.name || 'Page',
+        type: 'facebook_page' as const
+      }));
+
+    const instagramAccounts = uniquePages
+      .filter(page => page.source === 'instagram_accounts')
+      .map(account => ({
+        id: account.id,
+        name: account.name,
+        username: account.username || account.name,
+        type: 'instagram_account' as const,
+        connected_page_id: account.connected_page_id || null,
+        connected_page_name: account.connected_page_name || null
+      }));
+
+    // Determine default selection (prefer Facebook pages over Instagram)
+    const totalAccounts = facebookPages.length + instagramAccounts.length;
+    let defaultPageId = null;
+    let defaultPageName = null;
+    let defaultPageType = null;
+
+    if (facebookPages.length > 0) {
+      defaultPageId = facebookPages[0].id;
+      defaultPageName = facebookPages[0].name;
+      defaultPageType = 'facebook_page';
+    } else if (instagramAccounts.length > 0) {
+      defaultPageId = instagramAccounts[0].id;
+      defaultPageName = instagramAccounts[0].name || instagramAccounts[0].username;
+      defaultPageType = 'instagram_account';
+    }
+
+    const sourcesArray = Array.from(new Set(pages.map(p => p.source)));
+
+    return NextResponse.json({
+      success: true,
+      pages: facebookPages,
+      instagramAccounts,
+      defaultPageId,
+      defaultPageName,
+      defaultPageType,
+      totalAccounts,
+      debug: {
+        totalFetched: pages.length,
+        uniqueCount: uniquePages.length,
+        sources: sourcesArray,
+        errors: errors.length > 0 ? errors : undefined
+      }
+    });
 
   } catch (error) {
-    console.error('❌ Error in Facebook pages route:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch Facebook pages' },
-      { status: 500 }
-    );
+    console.error('❌ Pages API error:', error);
+    return NextResponse.json({
+      error: 'Internal server error',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
   }
 }
