@@ -4,70 +4,61 @@ import { FacebookMetricsService } from '@/lib/services/facebook-metrics-service'
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const type = searchParams.get('type');
-    const id = searchParams.get('id');
-    const days = searchParams.get('days') || '30';
-
-    if (!type || !id) {
-      return NextResponse.json(
-        { error: 'Type and ID parameters are required' },
-        { status: 400 }
-      );
-    }
-
-    // Validate entity type
-    const validTypes = ['campaign', 'adset', 'ad'];
-    if (!validTypes.includes(type)) {
-      return NextResponse.json(
-        { error: 'Invalid type. Must be campaign, adset, or ad' },
-        { status: 400 }
-      );
-    }
-
+    // Get user from session
     const supabase = await createClient();
-    
-    // Get authenticated user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
-    if (userError || !user) {
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
       return NextResponse.json(
         { error: 'Authentication required' },
         { status: 401 }
       );
     }
 
-    // Initialize metrics service
-    const metricsService = new FacebookMetricsService(supabase);
+    // Get the query parameters
+    const searchParams = request.nextUrl.searchParams;
+    const entityType = searchParams.get('type'); // 'campaign', 'adset', or 'ad'
+    const entityId = searchParams.get('id');
+    const days = parseInt(searchParams.get('days') || '30', 10);
 
-    // Fetch metrics based on type
-    let metrics;
-    switch (type) {
-      case 'campaign':
-        metrics = await metricsService.getCampaignMetrics(id, parseInt(days));
-        break;
-      case 'adset':
-        metrics = await metricsService.getAdSetMetrics(id, parseInt(days));
-        break;
-      case 'ad':
-        metrics = await metricsService.getAdMetrics(id, parseInt(days));
-        break;
-      default:
-        return NextResponse.json(
-          { error: 'Invalid entity type' },
-          { status: 400 }
-        );
+    if (!entityType || !entityId) {
+      return NextResponse.json(
+        { error: 'Entity type and ID are required' },
+        { status: 400 }
+      );
     }
 
-    return NextResponse.json({
-      metrics: metrics || []
-    });
+    // Validate entity type
+    if (!['campaign', 'adset', 'ad'].includes(entityType)) {
+      return NextResponse.json(
+        { error: 'Invalid entity type. Must be "campaign", "adset", or "ad"' },
+        { status: 400 }
+      );
+    }
 
+    // Create metrics service
+    const metricsService = new FacebookMetricsService(supabase);
+    
+    // Fetch metrics based on entity type
+    let metrics: unknown[] = [];
+    
+    if (entityType === 'campaign') {
+      metrics = await metricsService.getCampaignMetrics(entityId, days);
+    } else if (entityType === 'adset') {
+      metrics = await metricsService.getAdSetMetrics(entityId, days);
+    } else if (entityType === 'ad') {
+      metrics = await metricsService.getAdMetrics(entityId, days);
+    }
+
+    // Return metrics
+    return NextResponse.json({ metrics });
   } catch (error) {
-    console.error('Error fetching metrics:', error);
+    console.error('Error fetching Facebook metrics:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    
     return NextResponse.json(
-      { error: 'Failed to fetch metrics' },
+      { error: errorMessage },
       { status: 500 }
     );
   }
-}
+} 
