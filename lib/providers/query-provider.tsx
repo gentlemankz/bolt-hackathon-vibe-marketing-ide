@@ -19,4 +19,4 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       {children}
     </QueryClientProvider>
   );
-}
+} 
