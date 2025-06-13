@@ -1,31 +1,18 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { Button } from '@/components/ui/button';
-import { Plus, MessageSquare, X } from 'lucide-react';
-import { FacebookAdAccount, FacebookCampaign, FacebookAdSet, FacebookAd, LeadNurturingFile } from '@/lib/types';
-import { DashboardLayout } from '@/components/facebook/dashboard-layout';
-import { FacebookAdAccounts } from '@/components/facebook/ad-accounts';
-import { ContentView } from '@/components/facebook/content-view';
-import { CampaignCreateDialog } from '@/components/facebook/campaign-create-dialog';
-import { AdSetCreateDialog } from '@/components/facebook/adset-create-dialog';
-import { AdCreateDialog } from '@/components/facebook/ad-create-dialog';
-import { useTaggedFiles } from '@/lib/hooks/use-tagged-files';
-import { useAIContext } from '@/lib/hooks/use-ai-context';
-import { ContextData, TaggedFile } from '@/lib/ai-api-client';
-import {
-  useFacebookCampaigns,
-  useFacebookAdSets,
-  useFacebookAds,
-  prefetchCampaigns,
-  prefetchAdSets,
-  prefetchAds
-} from '@/lib/hooks/use-facebook-data';
-
-// ============================================================================
-// TypeScript Interfaces
-// ============================================================================
+import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { DashboardLayout } from "@/components/facebook/dashboard-layout";
+import { SidebarExplorer } from "@/components/facebook/sidebar-explorer";
+import { ContentView } from "@/components/facebook/content-view";
+import { CampaignCreateDialog } from "@/components/facebook/campaign-create-dialog";
+import { AdSetCreateDialog } from "@/components/facebook/adset-create-dialog";
+import { AdCreateDialog } from "@/components/facebook/ad-create-dialog";
+import { FacebookAdAccount, FacebookCampaign, FacebookAdSet, FacebookAd, LeadNurturingFile } from "@/lib/types";
+import { prefetchCampaigns, prefetchAdSets, prefetchAds, prefetchMetrics } from "@/lib/hooks/use-facebook-data";
+import { useAIContext } from "@/lib/hooks/use-ai-context";
+import { useTaggedFiles } from "@/lib/hooks/use-tagged-files";
+import { TaggedFile } from "@/lib/ai-api-client";
 
 interface MarketingDashboardProps {
   initialAdAccounts: FacebookAdAccount[];
@@ -33,575 +20,393 @@ interface MarketingDashboardProps {
 }
 
 interface MetricsData {
-  campaigns: Record<string, any>;
-  adSets: Record<string, any>;
-  ads: Record<string, any>;
-  summary: Record<string, any>;
+  [key: string]: unknown[] | {
+    total_campaigns: number;
+    total_adsets: number;
+    total_ads: number;
+    has_data: boolean;
+  };
 }
-
-type SelectedItem = FacebookAdAccount | FacebookCampaign | FacebookAdSet | FacebookAd | LeadNurturingFile | null;
-
-interface CacheData {
-  campaigns: Record<string, FacebookCampaign[]>;
-  adSets: Record<string, FacebookAdSet[]>;
-  ads: Record<string, FacebookAd[]>;
-  lastUpdated: Record<string, number>;
-}
-
-// ============================================================================
-// Main Component
-// ============================================================================
 
 export function MarketingDashboard({ initialAdAccounts, isChatOpen }: MarketingDashboardProps) {
-  console.log('🚀 MarketingDashboard: Initializing with', initialAdAccounts.length, 'ad accounts');
-
-  // ============================================================================
-  // State Management
-  // ============================================================================
-
-  const [selectedItem, setSelectedItem] = useState<SelectedItem>(null);
-  const [selectedAdAccount, setSelectedAdAccount] = useState<FacebookAdAccount | null>(
-    initialAdAccounts.length > 0 ? initialAdAccounts[0] : null
-  );
-  const [adAccounts, setAdAccounts] = useState<FacebookAdAccount[]>(initialAdAccounts);
-  const [cache, setCache] = useState<CacheData>({
-    campaigns: {},
-    adSets: {},
-    ads: {},
-    lastUpdated: {}
-  });
-  const [metricsData, setMetricsData] = useState<MetricsData>({
-    campaigns: {},
-    adSets: {},
-    ads: {},
-    summary: {}
-  });
-  const [timeRange, setTimeRange] = useState('30');
-  const [currentView, setCurrentView] = useState('ad-accounts-overview');
-
-  // Dialog states
+  const [selectedItem, setSelectedItem] = useState<{
+    type: 'account' | 'campaign' | 'adset' | 'ad' | 'lead-nurturing';
+    item: FacebookAdAccount | FacebookCampaign | FacebookAdSet | FacebookAd | LeadNurturingFile;
+    parentId?: string;
+  } | null>(null);
+  const [forceUpdate, setForceUpdate] = useState(0);
   const [campaignDialogOpen, setCampaignDialogOpen] = useState(false);
+  const [selectedAdAccountForCampaign, setSelectedAdAccountForCampaign] = useState<FacebookAdAccount | null>(null);
   const [adSetDialogOpen, setAdSetDialogOpen] = useState(false);
+  const [selectedCampaignForAdSet, setSelectedCampaignForAdSet] = useState<{ id: string; name: string } | null>(null);
   const [adDialogOpen, setAdDialogOpen] = useState(false);
-  const [selectedCampaignForAdSet, setSelectedCampaignForAdSet] = useState<FacebookCampaign | null>(null);
-  const [selectedAdSetForAd, setSelectedAdSetForAd] = useState<FacebookAdSet | null>(null);
-
-  // ============================================================================
-  // Hooks
-  // ============================================================================
-
+  const [selectedAdSetForAd, setSelectedAdSetForAd] = useState<{ id: string; name: string; adAccountId: string } | null>(null);
+  
   const queryClient = useQueryClient();
-  const {
-    taggedFiles,
-    setTaggedFiles,
-    addTaggedFile,
-    removeTaggedFile,
-    isTagged,
-    toggleTaggedFile
-  } = useTaggedFiles();
-
-  // Data fetching hooks
-  const { data: campaignsData } = useFacebookCampaigns(selectedAdAccount?.id || null);
-  const { data: adSetsData } = useFacebookAdSets(selectedCampaignForAdSet?.id || null);
-  const { data: adsData } = useFacebookAds(selectedAdSetForAd?.id || null);
-
-  // ============================================================================
-  // Cache Management Functions
-  // ============================================================================
-
-  const updateCache = useCallback((key: string, data: any, type: 'campaigns' | 'adSets' | 'ads') => {
-    console.log(`📦 MarketingDashboard: Updating cache for ${type}:`, key);
-    setCache(prev => ({
-      ...prev,
-      [type]: {
-        ...prev[type],
-        [key]: data
-      },
-      lastUpdated: {
-        ...prev.lastUpdated,
-        [`${type}_${key}`]: Date.now()
-      }
-    }));
-  }, []);
-
-  const getCachedData = useCallback((key: string, type: 'campaigns' | 'adSets' | 'ads') => {
-    const data = cache[type][key];
-    const lastUpdated = cache.lastUpdated[`${type}_${key}`];
-    const isStale = !lastUpdated || (Date.now() - lastUpdated) > 5 * 60 * 1000; // 5 minutes
+  
+  // Get all campaigns for all ad accounts from React Query cache
+  const getAllCampaignsFromCache = () => {
+    const campaignsMap: Record<string, FacebookCampaign[]> = {};
     
-    console.log(`📦 MarketingDashboard: Cache check for ${type}:${key}`, {
-      hasData: !!data,
-      isStale,
-      lastUpdated: lastUpdated ? new Date(lastUpdated).toISOString() : 'never'
+    initialAdAccounts.forEach(account => {
+      const campaignsData = queryClient.getQueryData(['facebook', 'campaigns', account.id]) as FacebookCampaign[] | undefined;
+      if (campaignsData) {
+        campaignsMap[account.id] = campaignsData;
+      }
     });
     
-    return isStale ? null : data;
-  }, [cache]);
-
-  const invalidateCache = useCallback((key?: string, type?: 'campaigns' | 'adSets' | 'ads') => {
-    console.log('🗑️ MarketingDashboard: Invalidating cache', { key, type });
-    if (key && type) {
-      setCache(prev => ({
-        ...prev,
-        [type]: {
-          ...prev[type],
-          [key]: undefined
-        },
-        lastUpdated: {
-          ...prev.lastUpdated,
-          [`${type}_${key}`]: 0
-        }
-      }));
-    } else {
-      // Clear all cache
-      setCache({
-        campaigns: {},
-        adSets: {},
-        ads: {},
-        lastUpdated: {}
-      });
+    return campaignsMap;
+  };
+  
+  // Get all ad sets from cache for all campaigns
+  const getAllAdSetsFromCache = () => {
+    const allAdSets: Record<string, FacebookAdSet[]> = {};
+    
+    // Get all campaigns first
+    const allCampaigns = getAllCampaignsFromCache();
+    
+    // For each campaign, get its ad sets from cache
+    Object.values(allCampaigns).flat().forEach(campaign => {
+      const adSetsFromCache = queryClient.getQueryData(['facebook', 'adsets', campaign.id]) as FacebookAdSet[] | undefined;
+      if (adSetsFromCache && adSetsFromCache.length > 0) {
+        allAdSets[campaign.id] = adSetsFromCache;
+      }
+    });
+    
+    return allAdSets;
+  };
+  
+  // Get all ads from cache for all ad sets
+  const getAllAdsFromCache = () => {
+    const allAds: Record<string, FacebookAd[]> = {};
+    
+    // Get all ad sets first
+    const allAdSets = getAllAdSetsFromCache();
+    
+    // For each ad set, get its ads from cache
+    Object.values(allAdSets).flat().forEach(adSet => {
+      const adsFromCache = queryClient.getQueryData(['facebook', 'ads', adSet.id]) as FacebookAd[] | undefined;
+      if (adsFromCache && adsFromCache.length > 0) {
+        allAds[adSet.id] = adsFromCache;
+      }
+    });
+    
+    return allAds;
+  };
+  
+  // Get metrics from cache
+  const getAllMetricsFromCache = (): MetricsData => {
+    const metricsData: MetricsData = {};
+    console.log('Collecting metrics from cache...');
+    
+    // Get campaign metrics
+    const campaigns = getAllCampaignsFromCache();
+    console.log('Found campaigns:', Object.keys(campaigns).length, 'accounts with campaigns');
+    Object.values(campaigns).flat().forEach(campaign => {
+      const campaignMetrics = queryClient.getQueryData(['facebook', 'metrics', 'campaign', campaign.id, 30]);
+      console.log(`Campaign ${campaign.name} metrics:`, campaignMetrics ? 'found' : 'not found');
+      if (campaignMetrics && Array.isArray(campaignMetrics) && campaignMetrics.length > 0) {
+        metricsData[`campaign_${campaign.id}`] = campaignMetrics;
+      }
+    });
+    
+    // Get ad set metrics
+    const adSets = getAllAdSetsFromCache();
+    console.log('Found ad sets:', Object.keys(adSets).length, 'campaigns with ad sets');
+    Object.values(adSets).flat().forEach(adSet => {
+      const adSetMetrics = queryClient.getQueryData(['facebook', 'metrics', 'adset', adSet.id, 30]);
+      console.log(`Ad set ${adSet.name} metrics:`, adSetMetrics ? 'found' : 'not found');
+      if (adSetMetrics && Array.isArray(adSetMetrics) && adSetMetrics.length > 0) {
+        metricsData[`adset_${adSet.id}`] = adSetMetrics;
+      }
+    });
+    
+    // Get ad metrics
+    const ads = getAllAdsFromCache();
+    console.log('Found ads:', Object.keys(ads).length, 'ad sets with ads');
+    Object.values(ads).flat().forEach(ad => {
+      const adMetrics = queryClient.getQueryData(['facebook', 'metrics', 'ad', ad.id, 30]);
+      console.log(`Ad ${ad.name} metrics:`, adMetrics ? 'found' : 'not found');
+      if (adMetrics && Array.isArray(adMetrics) && adMetrics.length > 0) {
+        metricsData[`ad_${ad.id}`] = adMetrics;
+      }
+    });
+    
+    // Add summary metrics
+    if (Object.keys(metricsData).length > 0) {
+      metricsData.summary = {
+        total_campaigns: Object.keys(metricsData).filter(k => k.startsWith('campaign_')).length,
+        total_adsets: Object.keys(metricsData).filter(k => k.startsWith('adset_')).length,
+        total_ads: Object.keys(metricsData).filter(k => k.startsWith('ad_')).length,
+        has_data: true
+      };
     }
-  }, []);
+    
+    console.log('Final metrics data:', metricsData);
+    return metricsData;
+  };
+  
+  // Tagged files management
+  const { taggedFiles, toggleTaggedFile, isTagged, setTaggedFiles } = useTaggedFiles();
 
-  // ============================================================================
-  // Data Prefetching and Management
-  // ============================================================================
-
+  // Prefetch data for all accounts, campaigns, ad sets, and ads
   useEffect(() => {
-    const prefetchData = async () => {
-      if (!selectedAdAccount) return;
-
-      console.log('🔄 MarketingDashboard: Prefetching data for account:', selectedAdAccount.id);
-
-      try {
-        // Check cache first
-        const cachedCampaigns = getCachedData(selectedAdAccount.id, 'campaigns');
-        if (!cachedCampaigns) {
-          console.log('📡 MarketingDashboard: Prefetching campaigns for account:', selectedAdAccount.id);
-          await prefetchCampaigns(queryClient, selectedAdAccount.id);
-        }
-
-        // Prefetch campaigns data
-        if (campaignsData && campaignsData.length > 0) {
-          updateCache(selectedAdAccount.id, campaignsData, 'campaigns');
-
-          // Prefetch ad sets for each campaign
-          for (const campaign of campaignsData.slice(0, 3)) { // Limit to first 3 campaigns
-            const cachedAdSets = getCachedData(campaign.id, 'adSets');
-            if (!cachedAdSets) {
-              console.log('📡 MarketingDashboard: Prefetching ad sets for campaign:', campaign.id);
+    const prefetchAllData = async () => {
+      if (initialAdAccounts.length > 0) {
+        console.log('Starting prefetch for', initialAdAccounts.length, 'accounts');
+        
+        // Prefetch campaigns for all accounts
+        for (const account of initialAdAccounts) {
+          console.log('Prefetching campaigns for account:', account.name);
+          await prefetchCampaigns(queryClient, account.id);
+          
+          // Get campaigns from cache and prefetch ad sets for all campaigns
+          const campaignsFromCache = queryClient.getQueryData(['facebook', 'campaigns', account.id]) as FacebookCampaign[] | undefined;
+          if (campaignsFromCache && campaignsFromCache.length > 0) {
+            console.log('Found', campaignsFromCache.length, 'campaigns for account:', account.name);
+            
+            for (const campaign of campaignsFromCache) {
+              console.log('Prefetching ad sets for campaign:', campaign.name);
               await prefetchAdSets(queryClient, campaign.id);
+              // Prefetch campaign metrics
+              await prefetchMetrics(queryClient, 'campaign', campaign.id, 30);
+              
+              // Get ad sets from cache and prefetch ads for all ad sets
+              const adSetsFromCache = queryClient.getQueryData(['facebook', 'adsets', campaign.id]) as FacebookAdSet[] | undefined;
+              if (adSetsFromCache && adSetsFromCache.length > 0) {
+                console.log('Found', adSetsFromCache.length, 'ad sets for campaign:', campaign.name);
+                
+                for (const adSet of adSetsFromCache) {
+                  console.log('Prefetching ads for ad set:', adSet.name);
+                  await prefetchAds(queryClient, adSet.id);
+                  // Prefetch ad set metrics
+                  await prefetchMetrics(queryClient, 'adset', adSet.id, 30);
+                  
+                  // Get ads from cache and prefetch metrics for all ads
+                  const adsFromCache = queryClient.getQueryData(['facebook', 'ads', adSet.id]) as FacebookAd[] | undefined;
+                  if (adsFromCache && adsFromCache.length > 0) {
+                    console.log('Found', adsFromCache.length, 'ads for ad set:', adSet.name);
+                    
+                    for (const ad of adsFromCache) {
+                      console.log('Prefetching metrics for ad:', ad.name);
+                      // Prefetch ad metrics
+                      await prefetchMetrics(queryClient, 'ad', ad.id, 30);
+                    }
+                  }
+                }
+              }
             }
           }
         }
-      } catch (error) {
-        console.error('❌ MarketingDashboard: Error prefetching data:', error);
+        
+        console.log('Prefetch complete, waiting 2 seconds before triggering re-render...');
+        // Add a delay to ensure all data is loaded
+        setTimeout(() => {
+          setForceUpdate(prev => prev + 1);
+          console.log('Force update triggered');
+        }, 2000);
       }
     };
+    
+    prefetchAllData();
+  }, [initialAdAccounts, queryClient]);
 
-    prefetchData();
-  }, [selectedAdAccount, campaignsData, queryClient, getCachedData, updateCache]);
+  // Handle selection of items
+  const handleSelectAdAccount = async (account: FacebookAdAccount) => {
+    setSelectedItem({
+      type: 'account',
+      item: account
+    });
+    
+    // Prefetch campaigns for this account
+    await prefetchCampaigns(queryClient, account.id);
+    setForceUpdate(prev => prev + 1); // Trigger re-render
+  };
 
-  // ============================================================================
-  // Selection Handlers
-  // ============================================================================
+  const handleSelectCampaign = async (campaign: FacebookCampaign, accountId: string) => {
+    setSelectedItem({
+      type: 'campaign',
+      item: campaign,
+      parentId: accountId
+    });
+    
+    // Prefetch ad sets for this campaign
+    await prefetchAdSets(queryClient, campaign.id);
+    setForceUpdate(prev => prev + 1); // Trigger re-render
+  };
 
-  const handleItemSelect = useCallback((item: SelectedItem) => {
-    console.log('🎯 MarketingDashboard: Item selected:', item);
-    setSelectedItem(item);
+  const handleSelectAdSet = async (adSet: FacebookAdSet, campaignId: string) => {
+    setSelectedItem({
+      type: 'adset',
+      item: adSet,
+      parentId: campaignId
+    });
+    
+    // Prefetch ads for this ad set
+    await prefetchAds(queryClient, adSet.id);
+    setForceUpdate(prev => prev + 1); // Trigger re-render
+  };
 
-    // Update current view based on selection
-    if (!item) {
-      setCurrentView('ad-accounts-overview');
-    } else if ('account_id' in item) {
-      setCurrentView(`account-${item.name.toLowerCase().replace(/\s+/g, '-')}`);
-    } else if ('ad_account_id' in item) {
-      setCurrentView(`campaign-${item.name.toLowerCase().replace(/\s+/g, '-')}`);
-    } else if ('campaign_id' in item) {
-      setCurrentView(`adset-${item.name.toLowerCase().replace(/\s+/g, '-')}`);
-    } else if ('ad_set_id' in item) {
-      setCurrentView(`ad-${item.name.toLowerCase().replace(/\s+/g, '-')}`);
-    } else if ('type' in item && item.type === 'follow-up') {
-      setCurrentView('lead-nurturing');
+  const handleSelectAd = (ad: FacebookAd, adSetId: string) => {
+    setSelectedItem({
+      type: 'ad',
+      item: ad,
+      parentId: adSetId
+    });
+  };
+
+  const handleSelectLeadNurturingFile = (file: LeadNurturingFile) => {
+    setSelectedItem({
+      type: 'lead-nurturing',
+      item: file
+    });
+  };
+
+  // Handle campaign creation
+  const handleCreateCampaign = (adAccountId: string) => {
+    const adAccount = initialAdAccounts.find(account => account.id === adAccountId);
+    if (adAccount) {
+      setSelectedAdAccountForCampaign(adAccount);
+      setCampaignDialogOpen(true);
     }
-  }, []);
+  };
 
-  const handleAdAccountSelect = useCallback((account: FacebookAdAccount) => {
-    console.log('🏢 MarketingDashboard: Ad account selected:', account.id);
-    setSelectedAdAccount(account);
-    setSelectedItem(account);
-    invalidateCache(); // Clear cache when switching accounts
-  }, [invalidateCache]);
-
-  // ============================================================================
-  // Dialog Handlers
-  // ============================================================================
-
-  const handleCreateCampaign = useCallback(() => {
-    console.log('➕ MarketingDashboard: Opening campaign creation dialog');
-    setCampaignDialogOpen(true);
-  }, []);
-
-  const handleCreateAdSet = useCallback((campaign: FacebookCampaign) => {
-    console.log('➕ MarketingDashboard: Opening ad set creation dialog for campaign:', campaign.id);
-    setSelectedCampaignForAdSet(campaign);
+  // Handle ad set creation
+  const handleCreateAdSet = (campaignId: string, campaignName: string) => {
+    setSelectedCampaignForAdSet({ id: campaignId, name: campaignName });
     setAdSetDialogOpen(true);
-  }, []);
+  };
 
-  const handleCreateAd = useCallback((adSet: FacebookAdSet) => {
-    console.log('➕ MarketingDashboard: Opening ad creation dialog for ad set:', adSet.id);
-    setSelectedAdSetForAd(adSet);
+  // Handle ad creation
+  const handleCreateAd = (adsetId: string, adsetName: string, adAccountId: string) => {
+    setSelectedAdSetForAd({ id: adsetId, name: adsetName, adAccountId });
     setAdDialogOpen(true);
-  }, []);
+  };
 
-  const handleDialogClose = useCallback((type: 'campaign' | 'adset' | 'ad') => {
-    console.log(`🔒 MarketingDashboard: Closing ${type} dialog`);
-    switch (type) {
-      case 'campaign':
-        setCampaignDialogOpen(false);
-        break;
-      case 'adset':
-        setAdSetDialogOpen(false);
-        setSelectedCampaignForAdSet(null);
-        break;
-      case 'ad':
-        setAdDialogOpen(false);
-        setSelectedAdSetForAd(null);
-        break;
-    }
-  }, []);
-
-  // ============================================================================
-  // Metrics Collection
-  // ============================================================================
-
-  const collectMetricsData = useCallback(() => {
-    console.log('📊 MarketingDashboard: Collecting metrics data');
-    
-    const campaigns = cache.campaigns[selectedAdAccount?.id || ''] || [];
-    const allAdSets: FacebookAdSet[] = [];
-    const allAds: FacebookAd[] = [];
-
-    // Collect all ad sets and ads
-    campaigns.forEach(campaign => {
-      const campaignAdSets = cache.adSets[campaign.id] || [];
-      allAdSets.push(...campaignAdSets);
-      
-      campaignAdSets.forEach(adSet => {
-        const adSetAds = cache.ads[adSet.id] || [];
-        allAds.push(...adSetAds);
-      });
-    });
-
-    const metrics = {
-      campaigns: campaigns.reduce((acc, campaign) => {
-        acc[campaign.id] = {
-          id: campaign.id,
-          name: campaign.name,
-          status: campaign.status,
-          objective: campaign.objective,
-          daily_budget: campaign.daily_budget,
-          lifetime_budget: campaign.lifetime_budget
-        };
-        return acc;
-      }, {} as Record<string, any>),
-      adSets: allAdSets.reduce((acc, adSet) => {
-        acc[adSet.id] = {
-          id: adSet.id,
-          name: adSet.name,
-          status: adSet.status,
-          campaign_id: adSet.campaign_id,
-          optimization_goal: adSet.optimization_goal,
-          billing_event: adSet.billing_event
-        };
-        return acc;
-      }, {} as Record<string, any>),
-      ads: allAds.reduce((acc, ad) => {
-        acc[ad.id] = {
-          id: ad.id,
-          name: ad.name,
-          status: ad.status,
-          ad_set_id: ad.ad_set_id,
-          campaign_id: ad.campaign_id
-        };
-        return acc;
-      }, {} as Record<string, any>),
-      summary: {
-        total_campaigns: campaigns.length,
-        total_adsets: allAdSets.length,
-        total_ads: allAds.length,
-        active_campaigns: campaigns.filter(c => c.status === 'ACTIVE').length,
-        active_adsets: allAdSets.filter(a => a.status === 'ACTIVE').length,
-        active_ads: allAds.filter(a => a.status === 'ACTIVE').length
-      }
-    };
-
-    console.log('📊 MarketingDashboard: Metrics collected:', {
-      campaigns: Object.keys(metrics.campaigns).length,
-      adSets: Object.keys(metrics.adSets).length,
-      ads: Object.keys(metrics.ads).length,
-      summary: metrics.summary
-    });
-
-    setMetricsData(metrics);
-    return metrics;
-  }, [cache, selectedAdAccount]);
-
-  // ============================================================================
-  // AI Context Generation
-  // ============================================================================
-
-  const generateContext = useCallback((): ContextData => {
-    console.log('🤖 MarketingDashboard: Generating AI context');
-    
-    const campaigns = cache.campaigns[selectedAdAccount?.id || ''] || [];
-    const allAdSets: FacebookAdSet[] = [];
-    const allAds: FacebookAd[] = [];
-
-    // Flatten all data
-    campaigns.forEach(campaign => {
-      const campaignAdSets = cache.adSets[campaign.id] || [];
-      allAdSets.push(...campaignAdSets);
-      
-      campaignAdSets.forEach(adSet => {
-        const adSetAds = cache.ads[adSet.id] || [];
-        allAds.push(...adSetAds);
-      });
-    });
-
-    const context: ContextData = {
-      campaigns: campaigns,
-      adsets: allAdSets,
-      ads: allAds,
-      ad_accounts: adAccounts,
-      metrics: collectMetricsData(),
-      selected_items: selectedItem ? [selectedItem] : [],
-      current_view: currentView,
-      date_range: {
-        days: timeRange
-      }
-    };
-
-    console.log('🤖 MarketingDashboard: Context generated:', {
-      campaigns: context.campaigns?.length || 0,
-      adsets: context.adsets?.length || 0,
-      ads: context.ads?.length || 0,
-      ad_accounts: context.ad_accounts?.length || 0,
-      selected_items: context.selected_items?.length || 0,
-      current_view: context.current_view
-    });
-
-    return context;
-  }, [cache, selectedAdAccount, adAccounts, selectedItem, currentView, timeRange, collectMetricsData]);
-
-  const { contextData, contextSummary, getAllMentionableItems } = useAIContext({
-    generateContext,
-    dependencies: [cache, selectedAdAccount, selectedItem, currentView, timeRange]
-  });
-
-  // ============================================================================
-  // Lead Nurturing Integration
-  // ============================================================================
-
-  const leadNurturingFile: LeadNurturingFile = useMemo(() => ({
-    id: 'lead-nurturing-1',
-    name: 'Lead Follow-up Sequences',
-    user_id: 'current-user',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    type: 'follow-up'
-  }), []);
-
-  // ============================================================================
-  // Render Functions
-  // ============================================================================
-
-  const renderSidebarContent = () => (
-    <div className="space-y-4">
-      {/* Ad Accounts Section */}
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold">Ad Accounts</h3>
-          {selectedAdAccount && (
-            <Button
-              size="sm"
-              onClick={handleCreateCampaign}
-              className="h-6 px-2 text-xs"
-            >
-              <Plus className="h-3 w-3 mr-1" />
-              Campaign
-            </Button>
-          )}
-        </div>
-        <div className="space-y-2">
-          {adAccounts.map((account) => (
-            <div
-              key={account.id}
-              className={`p-2 rounded cursor-pointer text-sm transition-colors ${
-                selectedAdAccount?.id === account.id
-                  ? 'bg-primary text-primary-foreground'
-                  : 'hover:bg-muted'
-              }`}
-              onClick={() => handleAdAccountSelect(account)}
-            >
-              <div className="font-medium truncate">{account.name}</div>
-              <div className="text-xs opacity-70">{account.currency}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Campaigns Section */}
-      {selectedAdAccount && campaignsData && campaignsData.length > 0 && (
-        <div className="p-4 border-t">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold">Campaigns</h3>
-            <span className="text-xs text-muted-foreground">
-              {campaignsData.length}
-            </span>
-          </div>
-          <div className="space-y-1 max-h-48 overflow-y-auto">
-            {campaignsData.slice(0, 10).map((campaign) => (
-              <div
-                key={campaign.id}
-                className={`p-2 rounded cursor-pointer text-xs transition-colors ${
-                  selectedItem && 'id' in selectedItem && selectedItem.id === campaign.id
-                    ? 'bg-primary text-primary-foreground'
-                    : 'hover:bg-muted'
-                }`}
-                onClick={() => handleItemSelect(campaign)}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-medium truncate">{campaign.name}</span>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCreateAdSet(campaign);
-                      }}
-                      className="h-4 w-4 p-0"
-                    >
-                      <Plus className="h-2 w-2" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleTaggedFile(campaign.id, campaign.name, 'campaign', campaign, {
-                          adAccountId: selectedAdAccount.id
-                        });
-                      }}
-                      className={`h-4 w-4 p-0 ${
-                        isTagged(campaign.id, 'campaign') ? 'text-primary' : ''
-                      }`}
-                    >
-                      <MessageSquare className="h-2 w-2" />
-                    </Button>
-                  </div>
-                </div>
-                <div className="text-xs opacity-70">{campaign.status}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Lead Nurturing Section */}
-      <div className="p-4 border-t">
-        <h3 className="text-sm font-semibold mb-3">Lead Nurturing</h3>
-        <div
-          className={`p-2 rounded cursor-pointer text-sm transition-colors ${
-            selectedItem && 'type' in selectedItem && selectedItem.type === 'follow-up'
-              ? 'bg-primary text-primary-foreground'
-              : 'hover:bg-muted'
-          }`}
-          onClick={() => handleItemSelect(leadNurturingFile)}
-        >
-          <div className="font-medium">Follow-up Sequences</div>
-          <div className="text-xs opacity-70">AI Avatar Creation</div>
-        </div>
-      </div>
-    </div>
+  // Render sidebar content
+  const sidebarContent = (
+    <SidebarExplorer
+      adAccounts={initialAdAccounts}
+      onSelectAdAccount={handleSelectAdAccount}
+      onSelectCampaign={handleSelectCampaign}
+      onSelectAdSet={handleSelectAdSet}
+      onSelectAd={handleSelectAd}
+      onSelectLeadNurturingFile={handleSelectLeadNurturingFile}
+      taggedFiles={taggedFiles}
+      onToggleTag={toggleTaggedFile}
+      isTagged={isTagged}
+      onCreateCampaign={handleCreateCampaign}
+      onCreateAdSet={handleCreateAdSet}
+      onCreateAd={handleCreateAd}
+    />
   );
 
-  const renderMainContent = () => (
-    <div className="flex-1 overflow-hidden">
-      {selectedItem ? (
-        <div className="h-full overflow-y-auto p-6">
-          <ContentView selectedItem={selectedItem} />
-        </div>
-      ) : (
-        <div className="h-full overflow-y-auto">
-          <FacebookAdAccounts 
-            initialAdAccounts={adAccounts}
-            onItemSelect={handleItemSelect}
-            onCreateCampaign={handleCreateCampaign}
-            onCreateAdSet={handleCreateAdSet}
-            onCreateAd={handleCreateAd}
-          />
-        </div>
-      )}
-    </div>
-  );
+  // Render main content
+  const mainContent = <ContentView selectedItem={selectedItem} />;
 
-  // ============================================================================
-  // Main Render
-  // ============================================================================
+  // Generate AI context with current data
+  const generateAIContext = () => {
+    const campaigns = getAllCampaignsFromCache();
+    const adSets = getAllAdSetsFromCache();
+    const ads = getAllAdsFromCache();
+    const metrics = getAllMetricsFromCache();
+    
+    // Debug logging
+    console.log('=== AI Context Generation ===');
+    console.log('Campaigns:', Object.keys(campaigns).length, 'accounts');
+    Object.entries(campaigns).forEach(([accountId, campaignList]) => {
+      console.log(`  Account ${accountId}: ${campaignList.length} campaigns`);
+    });
+    
+    console.log('Ad Sets:', Object.keys(adSets).length, 'campaigns');
+    Object.entries(adSets).forEach(([campaignId, adSetList]) => {
+      console.log(`  Campaign ${campaignId}: ${adSetList.length} ad sets`);
+    });
+    
+    console.log('Ads:', Object.keys(ads).length, 'ad sets');
+    Object.entries(ads).forEach(([adSetId, adList]) => {
+      console.log(`  Ad Set ${adSetId}: ${adList.length} ads`);
+    });
+    
+    console.log('Metrics keys:', Object.keys(metrics));
+    
+    const contextData = {
+      campaigns: Object.values(campaigns).flat() as unknown as Record<string, unknown>[],
+      ad_accounts: initialAdAccounts as unknown as Record<string, unknown>[],
+      adsets: Object.values(adSets).flat() as unknown as Record<string, unknown>[],
+      ads: Object.values(ads).flat() as unknown as Record<string, unknown>[],
+      metrics: metrics as Record<string, unknown>,
+      selected_items: taggedFiles as unknown as Record<string, unknown>[],
+      current_view: 'marketing-dashboard',
+      date_range: { period: '30' }
+    };
+    
+    console.log('Final context data structure:', {
+      campaigns: contextData.campaigns.length,
+      ad_accounts: contextData.ad_accounts.length,
+      adsets: contextData.adsets.length,
+      ads: contextData.ads.length,
+      metrics_keys: Object.keys(contextData.metrics).length
+    });
+    console.log('=== End AI Context ===');
+    
+    return contextData;
+  };
 
-  console.log('🎨 MarketingDashboard: Rendering with state:', {
-    selectedAdAccount: selectedAdAccount?.name,
-    selectedItem: selectedItem ? ('name' in selectedItem ? selectedItem.name : selectedItem.id) : null,
-    campaignsCount: campaignsData?.length || 0,
-    taggedFilesCount: taggedFiles.length,
-    isChatOpen
+  // AI Context for chat
+  const { context, contextSummary, getAllMentionableItems } = useAIContext({
+    generateContext: generateAIContext,
+    dependencies: [initialAdAccounts, forceUpdate, taggedFiles]
   });
+
+  // Handle tagging
+  const handleTaggedFilesChange = (files: TaggedFile[]) => {
+    setTaggedFiles(files);
+  };
 
   return (
     <>
       <DashboardLayout
-        sidebarContent={renderSidebarContent()}
-        mainContent={renderMainContent()}
+        sidebarContent={sidebarContent}
+        mainContent={mainContent}
         isChatOpen={isChatOpen}
-        context={contextData}
+        context={context || undefined}
         taggedFiles={taggedFiles}
-        onTaggedFilesChange={setTaggedFiles}
+        onTaggedFilesChange={handleTaggedFilesChange}
         contextSummary={contextSummary}
         getAllMentionableItems={getAllMentionableItems}
       />
-
+      
       {/* Campaign Creation Dialog */}
-      {selectedAdAccount && (
+      {selectedAdAccountForCampaign && (
         <CampaignCreateDialog
           open={campaignDialogOpen}
-          onOpenChange={(open) => !open && handleDialogClose('campaign')}
-          adAccountId={selectedAdAccount.id}
-          adAccountName={selectedAdAccount.name}
+          onOpenChange={setCampaignDialogOpen}
+          adAccountId={selectedAdAccountForCampaign.id}
+          adAccountName={selectedAdAccountForCampaign.name}
         />
       )}
-
+      
       {/* Ad Set Creation Dialog */}
       {selectedCampaignForAdSet && (
         <AdSetCreateDialog
           open={adSetDialogOpen}
-          onOpenChange={(open) => !open && handleDialogClose('adset')}
+          onOpenChange={setAdSetDialogOpen}
           campaignId={selectedCampaignForAdSet.id}
           campaignName={selectedCampaignForAdSet.name}
         />
       )}
-
+      
       {/* Ad Creation Dialog */}
-      {selectedAdSetForAd && selectedAdAccount && (
+      {selectedAdSetForAd && (
         <AdCreateDialog
           open={adDialogOpen}
-          onOpenChange={(open) => !open && handleDialogClose('ad')}
+          onOpenChange={setAdDialogOpen}
           adsetId={selectedAdSetForAd.id}
           adsetName={selectedAdSetForAd.name}
-          adAccountId={selectedAdAccount.id}
+          adAccountId={selectedAdSetForAd.adAccountId}
         />
       )}
     </>
   );
-}
+} 
