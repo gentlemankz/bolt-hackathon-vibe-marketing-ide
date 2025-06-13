@@ -1,10 +1,13 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { TavusReplica, TavusPersona, TavusVideo, TavusStockPersona, AvatarCreationRequest } from "@/lib/types";
+import { useQuery, useMutation, useQueryClient, QueryClient } from '@tanstack/react-query';
+import { 
+  TavusReplica, 
+  TavusPersona, 
+  TavusVideo,
+  TavusStockPersona,
+  AvatarCreationRequest 
+} from '@/lib/types';
 
-// ============================================================================
-// Query Keys
-// ============================================================================
-
+// Query keys
 export const tavusQueryKeys = {
   replicas: ['tavus', 'replicas'] as const,
   stockReplicas: ['tavus', 'stock-replicas'] as const,
@@ -14,69 +17,58 @@ export const tavusQueryKeys = {
   stockPersonas: ['tavus', 'stock-personas'] as const,
   videos: ['tavus', 'videos'] as const,
   video: (id: string) => ['tavus', 'video', id] as const,
+
 };
 
-// ============================================================================
-// Replica Hooks
-// ============================================================================
-
+// Replicas (user created)
 export function useTavusReplicas() {
   return useQuery({
     queryKey: tavusQueryKeys.replicas,
     queryFn: async (): Promise<TavusReplica[]> => {
       const response = await fetch('/api/tavus/replicas');
-      
       if (!response.ok) {
-        throw new Error(`Failed to fetch replicas: ${response.statusText}`);
+        throw new Error('Failed to fetch replicas');
       }
-      
       const data = await response.json();
-      return data.replicas || [];
+      return data.replicas;
     },
   });
 }
 
+// Stock replicas (templates)
 export function useTavusStockReplicas() {
   return useQuery({
     queryKey: tavusQueryKeys.stockReplicas,
     queryFn: async (): Promise<TavusReplica[]> => {
       const response = await fetch('/api/tavus/replicas/stock');
-      
       if (!response.ok) {
-        throw new Error(`Failed to fetch stock replicas: ${response.statusText}`);
+        throw new Error('Failed to fetch stock replicas');
       }
-      
       const data = await response.json();
-      return data.replicas || [];
+      return data.replicas;
     },
   });
 }
 
+// All replicas (stock + user)
 export function useAllTavusReplicas() {
   return useQuery({
     queryKey: tavusQueryKeys.allReplicas,
-    queryFn: async (): Promise<{ stockReplicas: TavusReplica[]; userReplicas: TavusReplica[]; allReplicas: TavusReplica[] }> => {
-      const [stockResponse, userResponse] = await Promise.all([
-        fetch('/api/tavus/replicas/stock'),
-        fetch('/api/tavus/replicas')
-      ]);
-      
-      if (!stockResponse.ok) {
-        throw new Error(`Failed to fetch stock replicas: ${stockResponse.statusText}`);
+    queryFn: async (): Promise<{
+      allReplicas: TavusReplica[];
+      stockReplicas: TavusReplica[];
+      userReplicas: TavusReplica[];
+    }> => {
+      const response = await fetch('/api/tavus/replicas?include_stock=true');
+      if (!response.ok) {
+        throw new Error('Failed to fetch all replicas');
       }
-      
-      if (!userResponse.ok) {
-        throw new Error(`Failed to fetch user replicas: ${userResponse.statusText}`);
-      }
-      
-      const stockData = await stockResponse.json();
-      const userData = await userResponse.json();
-      
-      const stockReplicas = stockData.replicas || [];
-      const userReplicas = userData.replicas || [];
-      const allReplicas = [...stockReplicas, ...userReplicas];
-      
-      return { stockReplicas, userReplicas, allReplicas };
+      const data = await response.json();
+      return {
+        allReplicas: data.replicas,
+        stockReplicas: data.stockReplicas || [],
+        userReplicas: data.userReplicas || []
+      };
     },
   });
 }
@@ -86,15 +78,12 @@ export function useTavusReplica(replicaId: string | null) {
     queryKey: tavusQueryKeys.replica(replicaId || ''),
     queryFn: async (): Promise<TavusReplica | null> => {
       if (!replicaId) return null;
-      
       const response = await fetch(`/api/tavus/replicas/${replicaId}`);
-      
       if (!response.ok) {
-        throw new Error(`Failed to fetch replica: ${response.statusText}`);
+        throw new Error('Failed to fetch replica');
       }
-      
       const data = await response.json();
-      return data.replica || null;
+      return data.replica;
     },
     enabled: !!replicaId,
   });
@@ -104,16 +93,11 @@ export function useCreateReplica() {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: async ({ trainVideoUrl, replicaName }: { trainVideoUrl: string; replicaName: string }): Promise<TavusReplica> => {
+    mutationFn: async (data: { trainVideoUrl: string; replicaName: string }) => {
       const response = await fetch('/api/tavus/replicas', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          train_video_url: trainVideoUrl,
-          replica_name: replicaName,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
       });
       
       if (!response.ok) {
@@ -125,7 +109,6 @@ export function useCreateReplica() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: tavusQueryKeys.replicas });
-      queryClient.invalidateQueries({ queryKey: tavusQueryKeys.allReplicas });
     },
   });
 }
@@ -134,7 +117,7 @@ export function useDeleteReplica() {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: async (replicaId: string): Promise<void> => {
+    mutationFn: async (replicaId: string) => {
       const response = await fetch(`/api/tavus/replicas/${replicaId}`, {
         method: 'DELETE',
       });
@@ -144,30 +127,23 @@ export function useDeleteReplica() {
         throw new Error(errorData.error || 'Failed to delete replica');
       }
     },
-    onSuccess: (_, replicaId) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: tavusQueryKeys.replicas });
-      queryClient.invalidateQueries({ queryKey: tavusQueryKeys.allReplicas });
-      queryClient.removeQueries({ queryKey: tavusQueryKeys.replica(replicaId) });
     },
   });
 }
 
-// ============================================================================
-// Persona Hooks
-// ============================================================================
-
+// Personas
 export function useTavusPersonas() {
   return useQuery({
     queryKey: tavusQueryKeys.personas,
     queryFn: async (): Promise<TavusPersona[]> => {
       const response = await fetch('/api/tavus/personas');
-      
       if (!response.ok) {
-        throw new Error(`Failed to fetch personas: ${response.statusText}`);
+        throw new Error('Failed to fetch personas');
       }
-      
       const data = await response.json();
-      return data.personas || [];
+      return data.personas;
     },
   });
 }
@@ -177,13 +153,11 @@ export function useTavusStockPersonas() {
     queryKey: tavusQueryKeys.stockPersonas,
     queryFn: async (): Promise<TavusStockPersona[]> => {
       const response = await fetch('/api/tavus/stock-personas');
-      
       if (!response.ok) {
-        throw new Error(`Failed to fetch stock personas: ${response.statusText}`);
+        throw new Error('Failed to fetch stock personas');
       }
-      
       const data = await response.json();
-      return data.personas || [];
+      return data.personas;
     },
   });
 }
@@ -192,21 +166,15 @@ export function useCreatePersona() {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: async ({ personaName, systemPrompt, context }: { 
+    mutationFn: async (data: { 
       personaName: string; 
       systemPrompt: string; 
       context: string; 
-    }): Promise<TavusPersona> => {
+    }) => {
       const response = await fetch('/api/tavus/personas', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          persona_name: personaName,
-          system_prompt: systemPrompt,
-          context: context,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
       });
       
       if (!response.ok) {
@@ -222,22 +190,17 @@ export function useCreatePersona() {
   });
 }
 
-// ============================================================================
-// Video Hooks
-// ============================================================================
-
+// Videos
 export function useTavusVideos() {
   return useQuery({
     queryKey: tavusQueryKeys.videos,
     queryFn: async (): Promise<TavusVideo[]> => {
       const response = await fetch('/api/tavus/videos');
-      
       if (!response.ok) {
-        throw new Error(`Failed to fetch videos: ${response.statusText}`);
+        throw new Error('Failed to fetch videos');
       }
-      
       const data = await response.json();
-      return data.videos || [];
+      return data.videos;
     },
   });
 }
@@ -247,15 +210,12 @@ export function useTavusVideo(videoId: string | null) {
     queryKey: tavusQueryKeys.video(videoId || ''),
     queryFn: async (): Promise<TavusVideo | null> => {
       if (!videoId) return null;
-      
       const response = await fetch(`/api/tavus/videos/${videoId}`);
-      
       if (!response.ok) {
-        throw new Error(`Failed to fetch video: ${response.statusText}`);
+        throw new Error('Failed to fetch video');
       }
-      
       const data = await response.json();
-      return data.video || null;
+      return data.video;
     },
     enabled: !!videoId,
   });
@@ -265,13 +225,11 @@ export function useCreateVideo() {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: async (request: AvatarCreationRequest): Promise<TavusVideo> => {
+    mutationFn: async (data: AvatarCreationRequest) => {
       const response = await fetch('/api/tavus/videos', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
       });
       
       if (!response.ok) {
@@ -287,54 +245,41 @@ export function useCreateVideo() {
   });
 }
 
-// ============================================================================
-// Prefetch Helpers
-// ============================================================================
 
-export async function prefetchTavusReplicas(queryClient: ReturnType<typeof useQueryClient>) {
+
+// Prefetch functions
+export async function prefetchTavusReplicas(queryClient: QueryClient) {
   await queryClient.prefetchQuery({
     queryKey: tavusQueryKeys.replicas,
     queryFn: async (): Promise<TavusReplica[]> => {
       const response = await fetch('/api/tavus/replicas');
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch replicas: ${response.statusText}`);
-      }
-      
+      if (!response.ok) throw new Error('Failed to fetch replicas');
       const data = await response.json();
-      return data.replicas || [];
+      return data.replicas;
     },
   });
 }
 
-export async function prefetchTavusPersonas(queryClient: ReturnType<typeof useQueryClient>) {
+export async function prefetchTavusPersonas(queryClient: QueryClient) {
   await queryClient.prefetchQuery({
     queryKey: tavusQueryKeys.personas,
     queryFn: async (): Promise<TavusPersona[]> => {
       const response = await fetch('/api/tavus/personas');
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch personas: ${response.statusText}`);
-      }
-      
+      if (!response.ok) throw new Error('Failed to fetch personas');
       const data = await response.json();
-      return data.personas || [];
+      return data.personas;
     },
   });
 }
 
-export async function prefetchTavusVideos(queryClient: ReturnType<typeof useQueryClient>) {
+export async function prefetchTavusVideos(queryClient: QueryClient) {
   await queryClient.prefetchQuery({
     queryKey: tavusQueryKeys.videos,
     queryFn: async (): Promise<TavusVideo[]> => {
       const response = await fetch('/api/tavus/videos');
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch videos: ${response.statusText}`);
-      }
-      
+      if (!response.ok) throw new Error('Failed to fetch videos');
       const data = await response.json();
-      return data.videos || [];
+      return data.videos;
     },
   });
-}
+} 
