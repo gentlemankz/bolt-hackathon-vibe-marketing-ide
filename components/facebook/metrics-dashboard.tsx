@@ -1,46 +1,20 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useState, useEffect, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { 
-  LineChart, 
-  Line, 
-  BarChart, 
-  Bar, 
-  PieChart, 
-  Pie, 
-  Cell, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  Legend, 
-  ResponsiveContainer 
-} from 'recharts';
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  RefreshCw, 
-  AlertCircle, 
-  BarChart3, 
-  PieChart as PieChartIcon,
-  Activity,
-  DollarSign,
-  MousePointer,
-  Eye,
-  Users,
-  Target
-} from 'lucide-react';
-
-// ============================================================================
-// TypeScript Interfaces
-// ============================================================================
+  BarChart, LineChart, PieChart, 
+  ResponsiveContainer, XAxis, YAxis, Tooltip, 
+  Legend, Bar, Line, Pie, Cell 
+} from "recharts";
+import { RefreshCw, AlertCircle, Activity, AlertTriangle } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { FacebookMetrics } from "@/lib/types";
+import { FacebookConnectButton } from "@/components/facebook/connect-button";
 
 interface MetricsProps {
   entityType: 'campaign' | 'adset' | 'ad';
@@ -49,779 +23,747 @@ interface MetricsProps {
   currency?: string;
 }
 
-interface ExtendedFacebookMetrics {
-  id: string;
+interface ExtendedFacebookMetrics extends FacebookMetrics {
   date: string;
-  impressions: number;
-  clicks: number;
-  reach: number;
-  frequency: number;
-  spend: string;
-  cpc: string;
-  cpm: string;
-  ctr: number;
-  unique_clicks: number;
-  unique_ctr: number;
-  cost_per_result: string;
-  conversions: number;
-  conversion_rate: number;
-  timestamp: string;
 }
-
-interface MetricsSummary {
-  total_impressions: number;
-  total_clicks: number;
-  total_reach: number;
-  total_spend: number;
-  avg_cpc: number;
-  avg_cpm: number;
-  avg_ctr: number;
-  total_conversions: number;
-  avg_frequency: number;
-  period_start: string;
-  period_end: string;
-}
-
-interface ChartDataPoint {
-  date: string;
-  impressions: number;
-  clicks: number;
-  spend: number;
-  ctr: number;
-  cpc: number;
-  conversions: number;
-}
-
-// ============================================================================
-// Main Component
-// ============================================================================
 
 export function MetricsDashboard({ entityType, entityId, entityName, currency = 'USD' }: MetricsProps) {
-  console.log('📊 MetricsDashboard: Initializing for', entityType, entityId, entityName);
-
-  // ============================================================================
-  // State Management
-  // ============================================================================
-
   const [metrics, setMetrics] = useState<ExtendedFacebookMetrics[]>([]);
-  const [summary, setSummary] = useState<MetricsSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [permissionError, setPermissionError] = useState(false);
-  const [timeRange, setTimeRange] = useState('30');
-  const [activeTab, setActiveTab] = useState('overview');
-  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
-  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+  const [timeRange, setTimeRange] = useState("30");
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+  const [activeTab, setActiveTab] = useState("overview");
+  const [permissionError, setPermissionError] = useState<boolean>(false);
 
-  // ============================================================================
-  // Supabase Client
-  // ============================================================================
+  // Initialize Supabase client
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  const supabase = createClient(supabaseUrl, supabaseKey);
 
-  const supabase = createClient();
-
-  // ============================================================================
-  // Utility Functions
-  // ============================================================================
-
-  const formatCurrency = useCallback((amount: string | number, currencyCode: string = currency): string => {
-    const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: currencyCode,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(numAmount);
-  }, [currency]);
-
-  const formatNumber = useCallback((num: number): string => {
-    if (num >= 1000000) {
-      return (num / 1000000).toFixed(1) + 'M';
-    } else if (num >= 1000) {
-      return (num / 1000).toFixed(1) + 'K';
-    }
-    return num.toLocaleString();
-  }, []);
-
-  const formatPercentage = useCallback((num: number): string => {
-    return `${num.toFixed(2)}%`;
-  }, []);
-
-  const calculateTrend = useCallback((current: number, previous: number): { value: number; isPositive: boolean } => {
-    if (previous === 0) return { value: 0, isPositive: true };
-    const trend = ((current - previous) / previous) * 100;
-    return { value: Math.abs(trend), isPositive: trend >= 0 };
-  }, []);
-
-  const getTableName = useCallback((type: string): string => {
-    switch (type) {
-      case 'campaign':
-        return 'facebook_campaign_metrics';
-      case 'adset':
-        return 'facebook_adset_metrics';
-      case 'ad':
-        return 'facebook_ad_metrics';
-      default:
-        throw new Error(`Unknown entity type: ${type}`);
-    }
-  }, []);
-
-  const getEntityColumn = useCallback((type: string): string => {
-    switch (type) {
-      case 'campaign':
-        return 'campaign_id';
-      case 'adset':
-        return 'ad_set_id';
-      case 'ad':
-        return 'ad_id';
-      default:
-        throw new Error(`Unknown entity type: ${type}`);
-    }
-  }, []);
-
-  // ============================================================================
-  // Data Fetching Functions
-  // ============================================================================
-
-  const fetchMetrics = useCallback(async (days: string = timeRange) => {
-    console.log('📡 MetricsDashboard: Fetching metrics for', entityType, entityId, 'days:', days);
+  // Fetch metrics data
+  const fetchMetrics = useCallback(async () => {
     setLoading(true);
     setError(null);
     setPermissionError(false);
-
+    
     try {
-      const tableName = getTableName(entityType);
-      const entityColumn = getEntityColumn(entityType);
+      const response = await fetch(
+        `/api/facebook/metrics?type=${entityType}&id=${entityId}&days=${timeRange}`
+      );
       
-      // Calculate date range
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(endDate.getDate() - parseInt(days));
-
-      const { data, error: fetchError } = await supabase
-        .from(tableName)
-        .select('*')
-        .eq(entityColumn, entityId)
-        .gte('date', startDate.toISOString().split('T')[0])
-        .lte('date', endDate.toISOString().split('T')[0])
-        .order('date', { ascending: true });
-
-      if (fetchError) {
-        console.error('❌ MetricsDashboard: Error fetching metrics:', fetchError);
-        throw fetchError;
+      if (!response.ok) {
+        const errorData = await response.json();
+        if (errorData.error && errorData.error.includes("has NOT grant ads_management or ads_read permission")) {
+          setPermissionError(true);
+          throw new Error("Facebook permissions error: Missing required permissions for metrics");
+        }
+        throw new Error(`Failed to fetch metrics: ${response.statusText}`);
       }
-
-      console.log('✅ MetricsDashboard: Fetched', data?.length || 0, 'metrics records');
-      setMetrics(data || []);
-
-      // Calculate summary
-      if (data && data.length > 0) {
-        const summaryData = calculateSummary(data);
-        setSummary(summaryData);
-      } else {
-        setSummary(null);
-      }
-
-    } catch (err) {
-      console.error('❌ MetricsDashboard: Error in fetchMetrics:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch metrics';
       
-      if (errorMessage.toLowerCase().includes('permission')) {
-        setPermissionError(true);
-        setError('Permission denied. Please reconnect your Facebook account with proper permissions.');
-      } else {
-        setError(errorMessage);
-      }
+      const data = await response.json();
+      setMetrics(data.metrics || []);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Failed to fetch metrics");
+      console.error("Error fetching metrics:", error);
     } finally {
       setLoading(false);
     }
-  }, [entityType, entityId, timeRange, supabase, getTableName, getEntityColumn]);
+  }, [entityType, entityId, timeRange]);
 
-  const calculateSummary = useCallback((metricsData: ExtendedFacebookMetrics[]): MetricsSummary => {
-    console.log('🧮 MetricsDashboard: Calculating summary for', metricsData.length, 'records');
-    
-    const totals = metricsData.reduce((acc, metric) => {
-      acc.impressions += metric.impressions;
-      acc.clicks += metric.clicks;
-      acc.reach += metric.reach;
-      acc.spend += parseFloat(metric.spend);
-      acc.conversions += metric.conversions;
-      acc.frequency += metric.frequency;
-      return acc;
-    }, {
-      impressions: 0,
-      clicks: 0,
-      reach: 0,
-      spend: 0,
-      conversions: 0,
-      frequency: 0
-    });
-
-    const avgCpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
-    const avgCpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
-    const avgCtr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
-    const avgFrequency = metricsData.length > 0 ? totals.frequency / metricsData.length : 0;
-
-    const summary: MetricsSummary = {
-      total_impressions: totals.impressions,
-      total_clicks: totals.clicks,
-      total_reach: totals.reach,
-      total_spend: totals.spend,
-      avg_cpc: avgCpc,
-      avg_cpm: avgCpm,
-      avg_ctr: avgCtr,
-      total_conversions: totals.conversions,
-      avg_frequency: avgFrequency,
-      period_start: metricsData[0]?.date || '',
-      period_end: metricsData[metricsData.length - 1]?.date || ''
-    };
-
-    console.log('✅ MetricsDashboard: Summary calculated:', summary);
-    return summary;
-  }, []);
-
+  // Sync metrics
   const syncMetrics = useCallback(async () => {
-    console.log('🔄 MetricsDashboard: Starting metrics sync for', entityType, entityId);
-    setSyncing(true);
-    setError(null);
-
+    setSyncStatus('syncing');
+    setPermissionError(false);
+    
     try {
-      const response = await fetch('/api/facebook/metrics/sync', {
-        method: 'POST',
+      // First, get the ad account ID based on entity type and ID
+      let adAccountId = "";
+      
+      if (entityType === 'campaign') {
+        const campaignResponse = await fetch(`/api/facebook/campaigns?campaignId=${entityId}`);
+        if (!campaignResponse.ok) throw new Error("Failed to fetch campaign");
+        const campaignData = await campaignResponse.json();
+        adAccountId = campaignData.campaign?.ad_account_id;
+      } else if (entityType === 'adset') {
+        const adSetResponse = await fetch(`/api/facebook/adsets?adSetId=${entityId}`);
+        if (!adSetResponse.ok) throw new Error("Failed to fetch ad set");
+        const adSetData = await adSetResponse.json();
+        
+        if (adSetData.adSet?.campaign_id) {
+          const campaignResponse = await fetch(`/api/facebook/campaigns?campaignId=${adSetData.adSet.campaign_id}`);
+          if (!campaignResponse.ok) throw new Error("Failed to fetch campaign");
+          const campaignData = await campaignResponse.json();
+          adAccountId = campaignData.campaign?.ad_account_id;
+        }
+      } else if (entityType === 'ad') {
+        const adResponse = await fetch(`/api/facebook/ads?adId=${entityId}`);
+        if (!adResponse.ok) throw new Error("Failed to fetch ad");
+        const adData = await adResponse.json();
+        
+        if (adData.ad?.campaign_id) {
+          const campaignResponse = await fetch(`/api/facebook/campaigns?campaignId=${adData.ad.campaign_id}`);
+          if (!campaignResponse.ok) throw new Error("Failed to fetch campaign");
+          const campaignData = await campaignResponse.json();
+          adAccountId = campaignData.campaign?.ad_account_id;
+        }
+      }
+      
+      if (!adAccountId) {
+        throw new Error("Could not determine ad account ID");
+      }
+      
+      // Trigger metrics sync
+      const response = await fetch("/api/facebook/sync-metrics", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          entityType,
-          entityId,
-          timeRange
+          adAccountId,
+          datePreset: timeRangeToDatePreset(timeRange),
         }),
       });
-
+      
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to sync metrics');
+        if (errorData.error && errorData.error.includes("has NOT grant ads_management or ads_read permission")) {
+          setPermissionError(true);
+          throw new Error("Facebook permissions error: Missing required permissions for metrics");
+        }
+        throw new Error(errorData.error || "Failed to sync metrics");
       }
-
-      console.log('✅ MetricsDashboard: Metrics sync completed');
-      setLastSyncTime(new Date());
       
-      // Refresh metrics after sync
-      await fetchMetrics();
-
-    } catch (err) {
-      console.error('❌ MetricsDashboard: Error syncing metrics:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Failed to sync metrics';
-      setError(errorMessage);
-    } finally {
-      setSyncing(false);
+      setSyncStatus('success');
+      
+      // Fetch updated metrics after a short delay
+      setTimeout(fetchMetrics, 2000);
+    } catch (error) {
+      setSyncStatus('error');
+      setError(error instanceof Error ? error.message : "Failed to sync metrics");
+      console.error("Error syncing metrics:", error);
     }
   }, [entityType, entityId, timeRange, fetchMetrics]);
 
-  // ============================================================================
-  // Chart Data Preparation
-  // ============================================================================
-
-  const chartData = useMemo((): ChartDataPoint[] => {
-    console.log('📈 MetricsDashboard: Preparing chart data from', metrics.length, 'metrics');
-    
-    return metrics.map(metric => ({
-      date: new Date(metric.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      impressions: metric.impressions,
-      clicks: metric.clicks,
-      spend: parseFloat(metric.spend),
-      ctr: metric.ctr,
-      cpc: parseFloat(metric.cpc),
-      conversions: metric.conversions
-    }));
-  }, [metrics]);
-
-  const pieChartData = useMemo(() => {
-    if (!summary) return [];
-    
-    return [
-      { name: 'Impressions', value: summary.total_impressions, color: '#8884d8' },
-      { name: 'Clicks', value: summary.total_clicks, color: '#82ca9d' },
-      { name: 'Conversions', value: summary.total_conversions, color: '#ffc658' },
-    ].filter(item => item.value > 0);
-  }, [summary]);
-
-  // ============================================================================
-  // Effects
-  // ============================================================================
-
   useEffect(() => {
-    console.log('🔄 MetricsDashboard: Initial data fetch triggered');
     fetchMetrics();
-  }, [fetchMetrics]);
-
-  useEffect(() => {
-    console.log('🔄 MetricsDashboard: Time range changed to', timeRange);
-    fetchMetrics(timeRange);
-  }, [timeRange, fetchMetrics]);
-
-  // Auto-sync when no metrics exist
-  useEffect(() => {
-    if (!loading && metrics.length === 0 && !error && autoSyncEnabled) {
-      console.log('🤖 MetricsDashboard: No metrics found, triggering auto-sync');
-      syncMetrics();
-    }
-  }, [loading, metrics.length, error, autoSyncEnabled, syncMetrics]);
-
-  // Realtime subscription
-  useEffect(() => {
-    console.log('📡 MetricsDashboard: Setting up realtime subscription');
     
-    const tableName = getTableName(entityType);
-    const entityColumn = getEntityColumn(entityType);
-    
+    // Set up realtime subscription
     const channel = supabase
-      .channel(`metrics-${entityType}-${entityId}`)
+      .channel('metrics-changes')
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
-          table: tableName,
-          filter: `${entityColumn}=eq.${entityId}`
+          table: `facebook_${entityType}_metrics`,
+          filter: `${entityType === 'adset' ? 'ad_set_id' : entityType + '_id'}=eq.${entityId}`
         },
-        (payload) => {
-          console.log('📡 MetricsDashboard: Realtime update received:', payload);
+        () => {
+          // Refresh metrics when data changes
           fetchMetrics();
         }
       )
       .subscribe();
-
+    
     return () => {
-      console.log('📡 MetricsDashboard: Cleaning up realtime subscription');
+      // Clean up subscription
       supabase.removeChannel(channel);
     };
-  }, [entityType, entityId, supabase, getTableName, getEntityColumn, fetchMetrics]);
+  }, [entityType, entityId, timeRange, fetchMetrics, supabase]);
+  
+  // Auto-sync metrics on first load if there are no metrics
+  useEffect(() => {
+    const autoSyncIfEmpty = async () => {
+      // If we've loaded and there are no metrics, trigger a sync
+      if (!loading && metrics.length === 0 && !error && !permissionError) {
+        console.log('No metrics found, auto-syncing...');
+        await syncMetrics();
+      }
+    };
+    
+    autoSyncIfEmpty();
+  }, [loading, metrics.length, error, permissionError, syncMetrics]);
 
-  // ============================================================================
-  // Tooltip Formatters
-  // ============================================================================
-
-  const customTooltip = useCallback(({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-background border rounded-lg p-3 shadow-lg">
-          <p className="font-medium">{label}</p>
-          {payload.map((entry: any, index: number) => (
-            <p key={index} style={{ color: entry.color }}>
-              {entry.dataKey === 'spend' 
-                ? `${entry.name}: ${formatCurrency(entry.value)}`
-                : entry.dataKey === 'ctr'
-                ? `${entry.name}: ${formatPercentage(entry.value)}`
-                : `${entry.name}: ${formatNumber(entry.value)}`
-              }
-            </p>
-          ))}
-        </div>
-      );
+  // Convert days to Facebook date preset
+  const timeRangeToDatePreset = (days: string): string => {
+    switch (days) {
+      case "7":
+        return "last_7_days";
+      case "14":
+        return "last_14_days";
+      case "30":
+        return "last_30_days";
+      case "90":
+        return "last_90_days";
+      case "180":
+        return "last_6_months";
+      case "365":
+        return "last_year";
+      default:
+        return "last_30_days";
     }
-    return null;
-  }, [formatCurrency, formatPercentage, formatNumber]);
+  };
 
-  // ============================================================================
-  // Render Functions
-  // ============================================================================
+  // Format currency
+  const formatCurrency = (value: string | number): string => {
+    if (typeof value === 'string') {
+      value = parseFloat(value);
+    }
+    
+    const formatter = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    
+    return formatter.format(value);
+  };
 
-  const renderPermissionError = () => (
-    <Card className="border-destructive">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-destructive">
-          <AlertCircle className="h-5 w-5" />
-          Permission Required
-        </CardTitle>
-        <CardDescription>
-          Your Facebook account needs additional permissions to access metrics data.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground mb-4">
-          To view detailed metrics and analytics, please reconnect your Facebook account with the required permissions:
-        </p>
-        <ul className="text-sm text-muted-foreground space-y-1 mb-4">
-          <li>• ads_management - Manage your ads</li>
-          <li>• ads_read - Read your ad data</li>
-          <li>• read_insights - Access performance metrics</li>
-        </ul>
-        <Button variant="outline" className="w-full">
-          Reconnect Facebook Account
-        </Button>
-      </CardContent>
-    </Card>
-  );
+  // Format percentage
+  const formatPercentage = (value: number): string => {
+    return `${(value * 100).toFixed(2)}%`;
+  };
 
-  const renderMetricCard = (
-    title: string,
-    value: string | number,
-    icon: React.ReactNode,
-    trend?: { value: number; isPositive: boolean },
-    subtitle?: string
-  ) => (
-    <Card>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-muted-foreground">{title}</p>
-            <p className="text-2xl font-bold">{value}</p>
-            {subtitle && (
-              <p className="text-xs text-muted-foreground">{subtitle}</p>
-            )}
-            {trend && (
-              <div className="flex items-center mt-1">
-                {trend.isPositive ? (
-                  <TrendingUp className="h-3 w-3 text-green-500 mr-1" />
-                ) : (
-                  <TrendingDown className="h-3 w-3 text-red-500 mr-1" />
-                )}
-                <span className={`text-xs ${trend.isPositive ? 'text-green-500' : 'text-red-500'}`}>
-                  {trend.value.toFixed(1)}%
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="rounded-full bg-primary/10 p-2">
-            {icon}
-          </div>
+  // Format large numbers
+  const formatNumber = (value: number): string => {
+    if (value >= 1000000) {
+      return `${(value / 1000000).toFixed(1)}M`;
+    } else if (value >= 1000) {
+      return `${(value / 1000).toFixed(1)}K`;
+    } else {
+      return value.toString();
+    }
+  };
+
+  // Calculate total and average metrics
+  const calculateTotals = () => {
+    if (!metrics.length) return null;
+    
+    const totals = {
+      impressions: 0,
+      clicks: 0,
+      spend: 0,
+      reach: 0,
+      conversions: 0,
+      ctr: 0,
+      cpc: 0,
+      frequency: 0,
+      conversion_rate: 0,
+    };
+    
+    metrics.forEach((metric) => {
+      totals.impressions += metric.impressions || 0;
+      totals.clicks += metric.clicks || 0;
+      totals.spend += parseFloat(metric.spend || '0');
+      totals.reach += metric.reach || 0;
+      totals.conversions += metric.conversions || 0;
+    });
+    
+    // Calculate derived metrics
+    totals.ctr = totals.impressions > 0 ? totals.clicks / totals.impressions : 0;
+    totals.cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
+    totals.frequency = totals.reach > 0 ? totals.impressions / totals.reach : 0;
+    totals.conversion_rate = totals.clicks > 0 ? totals.conversions / totals.clicks : 0;
+    
+    return totals;
+  };
+
+  // Process metrics data for charts
+  const prepareChartData = () => {
+    if (!metrics.length) return [];
+    
+    // Sort by date ascending
+    return [...metrics]
+      .sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return dateA - dateB;
+      })
+      .map((metric) => {
+        const date = new Date(metric.date);
+        return {
+          date: `${date.getMonth() + 1}/${date.getDate()}`,
+          impressions: metric.impressions,
+          clicks: metric.clicks,
+          spend: parseFloat(metric.spend || '0'),
+          conversions: metric.conversions,
+          ctr: metric.ctr,
+          cpc: parseFloat(metric.cpc || '0'),
+        };
+      });
+  };
+
+  // Prepare pie chart data
+  const preparePieChartData = () => {
+    const totals = calculateTotals();
+    if (!totals) return [];
+    
+    return [
+      { name: 'Clicks', value: totals.clicks },
+      { name: 'No Action', value: totals.impressions - totals.clicks }
+    ];
+  };
+
+  const chartData = prepareChartData();
+  const pieData = preparePieChartData();
+  const totals = calculateTotals();
+  
+  // Colors for charts
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
+
+  // Add permission error card component
+  const PermissionErrorCard = () => (
+    <Card className="mt-6 border-orange-300">
+      <CardContent className="pt-6">
+        <div className="flex flex-col items-center py-6">
+          <AlertTriangle className="h-12 w-12 text-orange-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium">Facebook Permissions Required</h3>
+          <p className="text-center text-muted-foreground mt-2 mb-6 max-w-md">
+            Your Facebook account doesn&apos;t have the required permissions to access metrics data. 
+            Please reconnect your account with full permissions for ads insights.
+          </p>
+          <FacebookConnectButton 
+            variant="default"
+            requiresReconnect={true}
+          >
+            Reconnect with Full Permissions
+          </FacebookConnectButton>
         </div>
       </CardContent>
     </Card>
   );
-
-  const renderOverviewTab = () => (
-    <div className="space-y-6">
-      {/* Summary Cards */}
-      {summary && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {renderMetricCard(
-            'Total Impressions',
-            formatNumber(summary.total_impressions),
-            <Eye className="h-4 w-4" />,
-            undefined,
-            'Total ad views'
-          )}
-          {renderMetricCard(
-            'Total Clicks',
-            formatNumber(summary.total_clicks),
-            <MousePointer className="h-4 w-4" />,
-            undefined,
-            `CTR: ${formatPercentage(summary.avg_ctr)}`
-          )}
-          {renderMetricCard(
-            'Total Spend',
-            formatCurrency(summary.total_spend),
-            <DollarSign className="h-4 w-4" />,
-            undefined,
-            `Avg CPC: ${formatCurrency(summary.avg_cpc)}`
-          )}
-          {renderMetricCard(
-            'Conversions',
-            formatNumber(summary.total_conversions),
-            <Target className="h-4 w-4" />,
-            undefined,
-            'Total conversions'
-          )}
-        </div>
-      )}
-
-      {/* Performance Overview Chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5" />
-            Performance Overview
-          </CardTitle>
-          <CardDescription>
-            Daily performance metrics over the selected time period
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip content={customTooltip} />
-                <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="impressions" 
-                  stroke="#8884d8" 
-                  strokeWidth={2}
-                  name="Impressions"
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="clicks" 
-                  stroke="#82ca9d" 
-                  strokeWidth={2}
-                  name="Clicks"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-              No data available for the selected time period
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  const renderPerformanceTab = () => (
-    <div className="space-y-6">
-      {/* Spend and CPC Chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Spend & Cost Analysis</CardTitle>
-          <CardDescription>
-            Daily spend and cost per click trends
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip content={customTooltip} />
-                <Legend />
-                <Bar dataKey="spend" fill="#8884d8" name="Spend" />
-                <Bar dataKey="cpc" fill="#82ca9d" name="CPC" />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-              No data available for the selected time period
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* CTR and Conversions Chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Conversion Performance</CardTitle>
-          <CardDescription>
-            Click-through rate and conversion trends
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip content={customTooltip} />
-                <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="ctr" 
-                  stroke="#ff7300" 
-                  strokeWidth={2}
-                  name="CTR (%)"
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="conversions" 
-                  stroke="#00ff00" 
-                  strokeWidth={2}
-                  name="Conversions"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-              No data available for the selected time period
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  const renderEngagementTab = () => (
-    <div className="space-y-6">
-      {/* Engagement Distribution */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <PieChartIcon className="h-5 w-5" />
-            Engagement Distribution
-          </CardTitle>
-          <CardDescription>
-            Breakdown of impressions, clicks, and conversions
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {pieChartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={pieChartData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {pieChartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex items-center justify-center h-[300px] text-muted-foreground">
-              No data available for the selected time period
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Engagement Metrics */}
-      {summary && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {renderMetricCard(
-            'Reach',
-            formatNumber(summary.total_reach),
-            <Users className="h-4 w-4" />,
-            undefined,
-            'Unique users reached'
-          )}
-          {renderMetricCard(
-            'Frequency',
-            summary.avg_frequency.toFixed(2),
-            <Activity className="h-4 w-4" />,
-            undefined,
-            'Avg times shown per user'
-          )}
-          {renderMetricCard(
-            'CPM',
-            formatCurrency(summary.avg_cpm),
-            <Eye className="h-4 w-4" />,
-            undefined,
-            'Cost per 1,000 impressions'
-          )}
-        </div>
-      )}
-    </div>
-  );
-
-  // ============================================================================
-  // Main Render
-  // ============================================================================
-
-  console.log('🎨 MetricsDashboard: Rendering with state:', {
-    entityType,
-    entityId,
-    metricsCount: metrics.length,
-    loading,
-    syncing,
-    error,
-    permissionError,
-    timeRange,
-    activeTab
-  });
-
-  if (permissionError) {
-    return renderPermissionError();
-  }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      {error && !permissionError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      
+      {permissionError && <PermissionErrorCard />}
+      
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">
-            {entityName} Metrics
-          </h2>
-          <p className="text-muted-foreground">
-            Performance analytics for your {entityType}
+          <h2 className="text-xl font-semibold">{entityName} Metrics</h2>
+          <p className="text-muted-foreground text-sm">
+            Performance data for this {entityType}
           </p>
         </div>
+        
         <div className="flex items-center gap-2">
-          <Select value={timeRange} onValueChange={setTimeRange}>
-            <SelectTrigger className="w-32">
-              <SelectValue />
+          <Select
+            value={timeRange}
+            onValueChange={setTimeRange}
+          >
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="Last 30 days" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="7">Last 7 days</SelectItem>
               <SelectItem value="14">Last 14 days</SelectItem>
               <SelectItem value="30">Last 30 days</SelectItem>
               <SelectItem value="90">Last 90 days</SelectItem>
+              <SelectItem value="180">Last 6 months</SelectItem>
+              <SelectItem value="365">Last year</SelectItem>
             </SelectContent>
           </Select>
-          <Button
-            variant="outline"
-            size="sm"
+          
+          <Button 
+            variant="outline" 
+            size="sm" 
             onClick={syncMetrics}
-            disabled={syncing}
-            className="flex items-center gap-2"
+            disabled={syncStatus === 'syncing' || loading}
           >
-            <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Syncing...' : 'Sync'}
+            <RefreshCw className={`h-4 w-4 mr-2 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+            Sync
           </Button>
         </div>
       </div>
-
-      {/* Sync Status */}
-      {lastSyncTime && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Badge variant="outline">
-            Last synced: {lastSyncTime.toLocaleString()}
-          </Badge>
-        </div>
-      )}
-
-      {/* Error Alert */}
-      {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* Loading State */}
-      {loading && (
-        <div className="flex items-center justify-center py-8">
-          <RefreshCw className="h-6 w-6 animate-spin" />
-          <span className="ml-2">Loading metrics...</span>
-        </div>
-      )}
-
-      {/* Main Content */}
-      {!loading && (
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="performance">Performance</TabsTrigger>
-            <TabsTrigger value="engagement">Engagement</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="overview" className="space-y-4">
-            {renderOverviewTab()}
-          </TabsContent>
-
-          <TabsContent value="performance" className="space-y-4">
-            {renderPerformanceTab()}
-          </TabsContent>
-
-          <TabsContent value="engagement" className="space-y-4">
-            {renderEngagementTab()}
-          </TabsContent>
-        </Tabs>
-      )}
+      
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid w-full max-w-md grid-cols-3">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="performance">Performance</TabsTrigger>
+          <TabsTrigger value="engagement">Engagement</TabsTrigger>
+        </TabsList>
+        
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full"></div>
+          </div>
+        ) : !metrics.length && !permissionError ? (
+          <Card className="mt-6">
+            <CardContent className="pt-6">
+              <div className="text-center py-6">
+                <Activity className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-medium">No Metrics Available</h3>
+                <p className="text-muted-foreground mt-2 mb-4">
+                  There are no metrics available for this {entityType} in the selected time period.
+                </p>
+                <Button onClick={syncMetrics}>
+                  Sync Metrics
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : !permissionError ? (
+          <>
+            <TabsContent value="overview">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mt-6">
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Impressions
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && formatNumber(totals.impressions)}
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Clicks
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && formatNumber(totals.clicks)}
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Spend
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && formatCurrency(totals.spend)}
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Conversions
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && formatNumber(totals.conversions)}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+              
+              <div className="grid gap-4 md:grid-cols-2 mt-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Performance Over Time</CardTitle>
+                    <CardDescription>
+                      Impressions and clicks over the selected time period
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="h-[300px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                          data={chartData}
+                          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                        >
+                          <XAxis dataKey="date" />
+                          <YAxis yAxisId="left" />
+                          <YAxis yAxisId="right" orientation="right" />
+                          <Tooltip 
+                            formatter={(value: number, name: string) => {
+                              if (name === 'impressions' || name === 'clicks') {
+                                return [formatNumber(value), name];
+                              }
+                              return [value, name];
+                            }}
+                          />
+                          <Legend />
+                          <Line
+                            yAxisId="left"
+                            type="monotone"
+                            dataKey="impressions"
+                            stroke="#8884d8"
+                            activeDot={{ r: 8 }}
+                          />
+                          <Line
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey="clicks"
+                            stroke="#82ca9d"
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Click-Through Rate</CardTitle>
+                    <CardDescription>
+                      Percentage of impressions that resulted in clicks
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-col items-center">
+                    <div className="text-3xl font-bold mb-4">
+                      {totals && formatPercentage(totals.ctr)}
+                    </div>
+                    <div className="h-[250px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={pieData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={90}
+                            fill="#8884d8"
+                            paddingAngle={5}
+                            dataKey="value"
+                            label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
+                          >
+                            {pieData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(value: number) => [formatNumber(value), 'Count']} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="performance">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mt-6">
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Cost per Click (CPC)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && formatCurrency(totals.cpc)}
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      CTR
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && formatPercentage(totals.ctr)}
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Conversion Rate
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && formatPercentage(totals.conversion_rate)}
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Cost per Conversion
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && totals.conversions > 0 
+                        ? formatCurrency(totals.spend / totals.conversions) 
+                        : "N/A"}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+              
+              <Card className="mt-4">
+                <CardHeader>
+                  <CardTitle>Daily Performance</CardTitle>
+                  <CardDescription>
+                    Cost metrics over the selected time period
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={chartData}
+                        margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                      >
+                        <XAxis dataKey="date" />
+                        <YAxis yAxisId="left" />
+                        <YAxis yAxisId="right" orientation="right" />
+                        <Tooltip
+                          formatter={(value: number, name: string) => {
+                            if (name === 'spend') {
+                              return [formatCurrency(value), 'Spend'];
+                            } else if (name === 'cpc') {
+                              return [formatCurrency(value), 'CPC'];
+                            }
+                            return [value, name];
+                          }}
+                        />
+                        <Legend />
+                        <Bar
+                          yAxisId="left"
+                          dataKey="spend"
+                          fill="#8884d8"
+                          name="Spend"
+                        />
+                        <Bar
+                          yAxisId="right"
+                          dataKey="cpc"
+                          fill="#82ca9d"
+                          name="CPC"
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            <TabsContent value="engagement">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mt-6">
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Reach
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && formatNumber(totals.reach)}
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Frequency
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && totals.frequency.toFixed(2)}
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Clicks per User
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && totals.reach > 0 
+                        ? (totals.clicks / totals.reach).toFixed(2) 
+                        : "N/A"}
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      Cost per Result
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="py-0">
+                    <div className="text-2xl font-bold">
+                      {totals && totals.conversions > 0 
+                        ? formatCurrency(totals.spend / totals.conversions) 
+                        : "N/A"}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+              
+              <Card className="mt-4">
+                <CardHeader>
+                  <CardTitle>Daily Conversions</CardTitle>
+                  <CardDescription>
+                    Conversions and CTR over time
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={chartData}
+                        margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                      >
+                        <XAxis dataKey="date" />
+                        <YAxis yAxisId="left" />
+                        <YAxis yAxisId="right" orientation="right" domain={[0, 0.1]} />
+                        <Tooltip
+                          formatter={(value: number, name: string) => {
+                            if (name === 'conversions') {
+                              return [formatNumber(value), 'Conversions'];
+                            } else if (name === 'ctr') {
+                              return [formatPercentage(value), 'CTR'];
+                            }
+                            return [value, name];
+                          }}
+                        />
+                        <Legend />
+                        <Bar
+                          yAxisId="left"
+                          dataKey="conversions"
+                          fill="#8884d8"
+                          name="Conversions"
+                        />
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="ctr"
+                          stroke="#ff7300"
+                          name="CTR"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </>
+        ) : null}
+      </Tabs>
     </div>
   );
-}
+} 
