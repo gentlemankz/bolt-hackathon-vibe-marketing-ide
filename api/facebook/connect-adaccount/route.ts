@@ -4,10 +4,20 @@ import { FacebookService } from '@/lib/services/facebook-service';
 
 export async function POST(request: NextRequest) {
   try {
+    // Get user from session
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    // Get the ad account ID from the request body
     const body = await request.json();
     const { adAccountId } = body;
-
-    console.log('Ad account connection request:', { adAccountId });
 
     if (!adAccountId) {
       return NextResponse.json(
@@ -16,67 +26,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const supabase = await createClient();
-    
-    // Get authenticated user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
-    if (userError || !user) {
-      return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
-      );
-    }
-
-    // Get Facebook access token
+    // Get access token from database
     const facebookService = new FacebookService(supabase);
     const accessToken = await facebookService.getAccessToken(user.id);
-    
+
     if (!accessToken) {
       return NextResponse.json(
-        { error: 'Facebook account not connected. Please connect your Facebook account first.' },
-        { status: 401 }
-      );
-    }
-
-    // Validate ad account ID format
-    const cleanAdAccountId = adAccountId.replace('act_', '');
-    if (!/^\d+$/.test(cleanAdAccountId)) {
-      return NextResponse.json(
-        { error: 'Invalid ad account ID format' },
+        { error: 'Facebook access token not found. Please reconnect your Facebook account.' },
         { status: 400 }
       );
     }
 
-    // Connect the ad account using FacebookService
-    console.log('Connecting ad account via FacebookService');
+    // Connect the ad account
     await facebookService.connectAdAccount(user.id, adAccountId, accessToken);
 
-    console.log('Ad account connected successfully:', adAccountId);
-
-    return NextResponse.json({
-      success: true,
-      message: 'Ad account connected successfully'
-    });
-
+    // Return success response
+    return NextResponse.json(
+      { message: 'Ad account connected successfully' },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error('Error connecting ad account:', error);
+    console.error('Error connecting Facebook ad account:', error);
     
-    const errorMessage = error instanceof Error ? error.message : 'Failed to connect ad account';
+    // Detailed error message for debugging
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
-    // Handle specific error types
-    let statusCode = 500;
-    if (errorMessage.includes('not found')) {
-      statusCode = 404;
-    } else if (errorMessage.includes('permission') || errorMessage.includes('access')) {
-      statusCode = 403;
-    } else if (errorMessage.includes('rate limit')) {
-      statusCode = 429;
-    }
-
     return NextResponse.json(
       { error: errorMessage },
-      { status: statusCode }
+      { status: 500 }
     );
   }
-}
+} 
