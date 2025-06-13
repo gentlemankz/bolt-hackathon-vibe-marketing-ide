@@ -3,138 +3,105 @@ import { createClient } from '@/lib/supabase/server';
 import { exchangeCodeForToken, FACEBOOK_SCOPES } from '@/lib/meta-api';
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const code = searchParams.get('code');
-  const error = searchParams.get('error');
-  const error_reason = searchParams.get('error_reason');
-  const error_description = searchParams.get('error_description');
-  const _next = searchParams.get('next');
-  const next = _next?.startsWith('/') ? _next : '/';
-
-  // Set up redirect URLs
-  const successRedirectUrl = '/facebook/select-adaccount';
-  const errorRedirectUrl = '/';
-
-  // Handle error cases first
-  if (error) {
-    console.error('Facebook OAuth error:', {
-      error,
-      error_reason,
-      error_description
-    });
-    
-    const errorParams = new URLSearchParams({
-      error: error_description || error_reason || error || 'Facebook authentication failed'
-    });
-    
-    return NextResponse.redirect(new URL(`${errorRedirectUrl}?${errorParams.toString()}`, request.url));
-  }
-
-  if (!code) {
-    console.error('No authorization code received from Facebook');
-    const errorParams = new URLSearchParams({
-      error: 'No authorization code received from Facebook'
-    });
-    
-    return NextResponse.redirect(new URL(`${errorRedirectUrl}?${errorParams.toString()}`, request.url));
-  }
-
   try {
-    console.log('Exchanging Facebook authorization code for access token');
-    
-    // Exchange code for token
-    const tokenData = await exchangeCodeForToken(code);
-    console.log('Token exchange successful:', {
-      token_type: tokenData.token_type,
-      expires_in: tokenData.expires_in
-    });
+    // Get code from query string
+    const searchParams = request.nextUrl.searchParams;
+    const code = searchParams.get('code');
+    const error = searchParams.get('error');
+    const error_reason = searchParams.get('error_reason');
+    const error_description = searchParams.get('error_description');
 
-    // Calculate expiration date
-    const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000);
-    console.log('Token expires at:', expiresAt.toISOString());
+    // Redirect URL for success or error
+    const redirectUrl = new URL('/facebook/select-adaccount', request.url);
+    const errorUrl = new URL('/', request.url);
+    errorUrl.searchParams.set('error', 'facebook_auth_failed');
 
-    // Get authenticated user
-    const supabase = await createClient();
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      console.error('Failed to get authenticated user:', userError);
-      const errorParams = new URLSearchParams({
-        error: 'Authentication required. Please sign in first.'
-      });
-      
-      return NextResponse.redirect(new URL(`${errorRedirectUrl}?${errorParams.toString()}`, request.url));
+    // Handle errors
+    if (error || !code) {
+      console.error('Facebook auth error:', error, error_reason, error_description);
+      return NextResponse.redirect(errorUrl);
     }
 
-    console.log('Authenticated user found:', user.id);
+    // Exchange code for token
+    const tokenData = await exchangeCodeForToken(code);
+    console.log('Facebook token obtained with scopes:', FACEBOOK_SCOPES);
+    
+    // Calculate token expiration
+    const expiresAt = new Date();
+    expiresAt.setSeconds(expiresAt.getSeconds() + tokenData.expires_in);
 
-    // Verify token permissions by making test API call
-    let hasAdPermissions = true;
+    // Get user from session
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      console.error('No authenticated user found when storing Facebook token');
+      errorUrl.searchParams.set('error', 'no_user');
+      return NextResponse.redirect(errorUrl);
+    }
+
+    // Verify the token has ads_read and ads_management permissions
+    let hasRequiredPermissions = false;
     try {
-      console.log('Verifying token permissions with test API call');
-      const testResponse = await fetch(`https://graph.facebook.com/v23.0/me/adaccounts?access_token=${tokenData.access_token}&limit=1`);
+      // Verify permissions by making a test API call to check ad accounts
+      const testResponse = await fetch(
+        `https://graph.facebook.com/v23.0/me/adaccounts?fields=id,name&access_token=${tokenData.access_token}&limit=1`
+      );
       
-      if (!testResponse.ok) {
-        const testError = await testResponse.json();
-        console.warn('Token lacks ad permissions:', testError);
-        hasAdPermissions = false;
+      if (testResponse.ok) {
+        console.log('Token successfully verified with ads_read permission');
+        hasRequiredPermissions = true;
       } else {
-        console.log('Token has ad permissions verified');
+        const errorData = await testResponse.json();
+        console.warn('Token is missing required permissions:', errorData);
+        
+        // If it's a permission error, redirect to error page
+        if (errorData.error && (
+            errorData.error.code === 200 || 
+            errorData.error.message.includes('permission')
+        )) {
+          errorUrl.searchParams.set('error', 'missing_permissions');
+          errorUrl.searchParams.set('error_description', 'The Facebook account needs to grant ads_management and ads_read permissions');
+          return NextResponse.redirect(errorUrl);
+        }
       }
-    } catch (permissionError) {
-      console.warn('Error verifying token permissions:', permissionError);
-      hasAdPermissions = false;
+    } catch (verifyError) {
+      console.warn('Error verifying token permissions:', verifyError);
+      // We'll continue and store the token anyway
     }
 
     // Store token in database
-    console.log('Storing Facebook token in database');
     const { error: insertError } = await supabase
       .from('facebook_tokens')
-      .upsert({
+      .insert({
         user_id: user.id,
         access_token: tokenData.access_token,
         expires_at: expiresAt.toISOString(),
-        has_ad_permissions: hasAdPermissions
-      }, {
-        onConflict: 'user_id'
+        has_ad_permissions: hasRequiredPermissions
       });
 
     if (insertError) {
-      console.error('Failed to store Facebook token:', insertError);
-      const errorParams = new URLSearchParams({
-        error: 'Failed to save Facebook connection. Please try again.'
-      });
-      
-      return NextResponse.redirect(new URL(`${errorRedirectUrl}?${errorParams.toString()}`, request.url));
+      console.error('Error storing Facebook token:', insertError);
+      errorUrl.searchParams.set('error', 'token_storage_failed');
+      return NextResponse.redirect(errorUrl);
     }
 
-    console.log('Facebook token stored successfully');
+    // Log successful token storage
+    console.log('Facebook token stored successfully for user:', user.id);
+    console.log('Token expires at:', expiresAt.toISOString());
+    console.log('Has required ad permissions:', hasRequiredPermissions);
 
-    // Prepare success redirect
-    let redirectUrl = successRedirectUrl;
-    const successParams = new URLSearchParams();
-
-    // Add warning if permissions are limited
-    if (!hasAdPermissions) {
-      console.warn('Token has limited permissions, adding warning to redirect');
-      successParams.set('warning', 'Limited permissions detected. Some features may not work properly.');
+    // If token was stored but doesn't have permissions, show warning
+    if (!hasRequiredPermissions) {
+      redirectUrl.searchParams.set('warning', 'limited_permissions');
+      redirectUrl.searchParams.set('warning_description', 'Limited ad access permissions detected. Some features may not work.');
     }
 
-    if (successParams.toString()) {
-      redirectUrl += `?${successParams.toString()}`;
-    }
-
-    console.log('Redirecting to success page:', redirectUrl);
-    return NextResponse.redirect(new URL(redirectUrl, request.url));
-
+    return NextResponse.redirect(redirectUrl);
   } catch (error) {
-    console.error('Error in Facebook callback:', error);
-    
-    const errorMessage = error instanceof Error ? error.message : 'Failed to complete Facebook authentication';
-    const errorParams = new URLSearchParams({
-      error: errorMessage
-    });
-    
-    return NextResponse.redirect(new URL(`${errorRedirectUrl}?${errorParams.toString()}`, request.url));
+    console.error('Unexpected error in Facebook callback:', error);
+    const errorUrl = new URL('/', request.url);
+    errorUrl.searchParams.set('error', 'unexpected_error');
+    return NextResponse.redirect(errorUrl);
   }
-}
+} 
