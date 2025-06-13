@@ -3,7 +3,19 @@ import { createClient } from '@/lib/supabase/server';
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
+    // Get user from session
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    // Get the ad account ID from query params
+    const searchParams = request.nextUrl.searchParams;
     const adAccountId = searchParams.get('adAccountId');
 
     if (!adAccountId) {
@@ -13,19 +25,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const supabase = await createClient();
-    
-    // Get authenticated user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
-    if (userError || !user) {
-      return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
-      );
-    }
-
-    // Verify user owns this ad account
+    // Verify user has access to this ad account
     const { data: adAccount, error: adAccountError } = await supabase
       .from('facebook_ad_accounts')
       .select('id')
@@ -36,11 +36,11 @@ export async function GET(request: NextRequest) {
     if (adAccountError || !adAccount) {
       return NextResponse.json(
         { error: 'Ad account not found or access denied' },
-        { status: 403 }
+        { status: 404 }
       );
     }
 
-    // Fetch campaigns
+    // Fetch campaigns for this ad account
     const { data: campaigns, error: campaignsError } = await supabase
       .from('facebook_campaigns')
       .select('*')
@@ -50,20 +50,19 @@ export async function GET(request: NextRequest) {
     if (campaignsError) {
       console.error('Error fetching campaigns:', campaignsError);
       return NextResponse.json(
-        { error: 'Failed to fetch campaigns' },
+        { error: `Failed to fetch campaigns: ${campaignsError.message}` },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      campaigns: campaigns || []
-    });
-
+    return NextResponse.json({ campaigns: campaigns || [] });
   } catch (error) {
-    console.error('Error in campaigns route:', error);
+    console.error('Error in campaigns API:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: errorMessage },
       { status: 500 }
     );
   }
-}
+} 
