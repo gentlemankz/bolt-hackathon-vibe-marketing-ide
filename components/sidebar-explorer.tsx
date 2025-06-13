@@ -1,678 +1,527 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { 
-  ChevronRight, 
-  ChevronDown, 
-  Facebook, 
-  Target, 
-  Users, 
-  MousePointer, 
-  Plus, 
-  MessageSquare,
-  Loader2,
-  Building2,
-  Zap
-} from 'lucide-react';
-import { 
-  FacebookAdAccount, 
-  FacebookCampaign, 
-  FacebookAdSet, 
-  FacebookAd, 
-  LeadNurturingFile 
-} from '@/lib/types';
-import { 
-  useFacebookCampaigns, 
-  useFacebookAdSets, 
-  useFacebookAds,
-  prefetchCampaigns,
-  prefetchAdSets,
-  prefetchAds
-} from '@/lib/hooks/use-facebook-data';
-
-// ============================================================================
-// TypeScript Interfaces
-// ============================================================================
+import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight, Facebook, BarChart2, LayoutGrid, Image, Tag, Users, FileText, Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { FacebookAdAccount, FacebookCampaign, FacebookAdSet, FacebookAd, LeadNurturingFile } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { TaggedFile } from "@/lib/ai-api-client";
+import { useFacebookCampaigns, useFacebookAdSets, useFacebookAds, prefetchCampaigns, prefetchAdSets, prefetchAds, prefetchMetrics } from "@/lib/hooks/use-facebook-data";
 
 type TaggableData = FacebookAdAccount | FacebookCampaign | FacebookAdSet | FacebookAd | LeadNurturingFile;
 
 interface SidebarExplorerProps {
   adAccounts: FacebookAdAccount[];
-  selectedItem: TaggableData | null;
-  onItemSelect: (item: TaggableData | null) => void;
+  onSelectAdAccount: (account: FacebookAdAccount) => void;
+  onSelectCampaign: (campaign: FacebookCampaign, accountId: string) => void;
+  onSelectAdSet: (adSet: FacebookAdSet, campaignId: string) => void;
+  onSelectAd: (ad: FacebookAd, adSetId: string) => void;
+  onSelectLeadNurturingFile?: (file: LeadNurturingFile) => void;
+  taggedFiles?: TaggedFile[];
+  onToggleTag?: (id: string, name: string, type: 'campaign' | 'adset' | 'ad' | 'account' | 'file', data: TaggableData, metadata?: Record<string, unknown>) => void;
+  isTagged?: (id: string, type: string) => boolean;
   onCreateCampaign?: (adAccountId: string) => void;
-  onCreateAdSet?: (campaign: FacebookCampaign) => void;
-  onCreateAd?: (adSet: FacebookAdSet) => void;
-  isTagged: (id: string, type: string) => boolean;
-  onToggleTag: (id: string, name: string, type: string, data: TaggableData, metadata?: Record<string, unknown>) => void;
+  onCreateAdSet?: (campaignId: string, campaignName: string) => void;
+  onCreateAd?: (adsetId: string, adsetName: string, adAccountId: string) => void;
 }
-
-// ============================================================================
-// Lead Nurturing Files Data
-// ============================================================================
-
-const leadNurturingFiles: LeadNurturingFile[] = [
-  {
-    id: 'lead-nurturing-1',
-    name: 'Follow-up Sequences',
-    user_id: 'current-user',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    type: 'follow-up'
-  }
-];
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-const getStatusColor = (status: string): string => {
-  switch (status.toUpperCase()) {
-    case 'ACTIVE':
-      return 'bg-green-100 text-green-800';
-    case 'PAUSED':
-      return 'bg-yellow-100 text-yellow-800';
-    case 'DELETED':
-    case 'ARCHIVED':
-      return 'bg-red-100 text-red-800';
-    default:
-      return 'bg-gray-100 text-gray-800';
-  }
-};
-
-// ============================================================================
-// Main Component
-// ============================================================================
 
 export function SidebarExplorer({
   adAccounts,
-  selectedItem,
-  onItemSelect,
+  onSelectAdAccount,
+  onSelectCampaign,
+  onSelectAdSet,
+  onSelectAd,
+  onSelectLeadNurturingFile,
+  onToggleTag,
+  isTagged = () => false,
   onCreateCampaign,
   onCreateAdSet,
-  onCreateAd,
-  isTagged,
-  onToggleTag
+  onCreateAd
 }: SidebarExplorerProps) {
-  console.log('🔍 SidebarExplorer: Rendering with', adAccounts.length, 'ad accounts');
-
-  // ============================================================================
-  // State Management
-  // ============================================================================
-
-  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
-  const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
-  const [expandedAdSets, setExpandedAdSets] = useState<Set<string>>(new Set());
-  const [activeAccountId, setActiveAccountId] = useState<string | null>(
-    adAccounts.length > 0 ? adAccounts[0].id : null
-  );
+  const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({});
+  const [expandedCampaigns, setExpandedCampaigns] = useState<Record<string, boolean>>({});
+  const [expandedAdSets, setExpandedAdSets] = useState<Record<string, boolean>>({});
+  const [expandedLeadNurturing, setExpandedLeadNurturing] = useState<boolean>(false);
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
   const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
   const [activeAdSetId, setActiveAdSetId] = useState<string | null>(null);
-  const [leadNurturingExpanded, setLeadNurturingExpanded] = useState(false);
-
-  // ============================================================================
-  // Hooks
-  // ============================================================================
-
+  
   const queryClient = useQueryClient();
+  
+  // Use React Query hooks
+  const { 
+    data: campaigns = [], 
+    isLoading: isLoadingCampaigns 
+  } = useFacebookCampaigns(activeAccountId);
+  
+  const { 
+    data: adSets = [], 
+    isLoading: isLoadingAdSets 
+  } = useFacebookAdSets(activeCampaignId);
+  
+  const { 
+    data: ads = [], 
+    isLoading: isLoadingAds 
+  } = useFacebookAds(activeAdSetId);
 
-  // Data fetching hooks
-  const { data: campaignsData, isLoading: campaignsLoading } = useFacebookCampaigns(activeAccountId);
-  const { data: adSetsData, isLoading: adSetsLoading } = useFacebookAdSets(activeCampaignId);
-  const { data: adsData, isLoading: adsLoading } = useFacebookAds(activeAdSetId);
-
-  // ============================================================================
-  // Prefetching Logic
-  // ============================================================================
-
+  // Prefetch data for all ad accounts when component mounts
   useEffect(() => {
-    const prefetchData = async () => {
-      // Prefetch campaigns for expanded accounts
-      for (const accountId of Array.from(expandedAccounts)) {
-        console.log('🔄 SidebarExplorer: Prefetching campaigns for account:', accountId);
-        await prefetchCampaigns(queryClient, accountId);
+    async function prefetchData() {
+      if (adAccounts && adAccounts.length > 0) {
+        // Prefetch the first account's campaigns automatically
+        if (adAccounts[0]) {
+          await prefetchCampaigns(queryClient, adAccounts[0].id);
+        }
+        
+        // Prefetch campaigns for all accounts in the background
+        for (const account of adAccounts) {
+          queryClient.prefetchQuery({
+            queryKey: ['facebook', 'campaigns', account.id],
+            queryFn: async () => {
+              const response = await fetch(`/api/facebook/campaigns?adAccountId=${account.id}`);
+              if (!response.ok) throw new Error('Failed to fetch campaigns');
+              const data = await response.json();
+              return data.campaigns as FacebookCampaign[];
+            },
+          });
+        }
       }
-
-      // Prefetch ad sets for expanded campaigns
-      for (const campaignId of Array.from(expandedCampaigns)) {
-        console.log('🔄 SidebarExplorer: Prefetching ad sets for campaign:', campaignId);
-        await prefetchAdSets(queryClient, campaignId);
-      }
-
-      // Prefetch ads for expanded ad sets
-      for (const adSetId of Array.from(expandedAdSets)) {
-        console.log('🔄 SidebarExplorer: Prefetching ads for ad set:', adSetId);
-        await prefetchAds(queryClient, adSetId);
-      }
-    };
-
+    }
+    
     prefetchData();
-  }, [expandedAccounts, expandedCampaigns, expandedAdSets, queryClient]);
+  }, [adAccounts, queryClient]);
 
-  // ============================================================================
-  // Toggle Handlers
-  // ============================================================================
+  // Toggle account expansion
+  const toggleAccount = (accountId: string) => {
+    const newState = !expandedAccounts[accountId];
+    setExpandedAccounts(prev => ({ ...prev, [accountId]: newState }));
+    
+    if (newState) {
+      setActiveAccountId(accountId);
+      
+      // Prefetch ad sets for ALL campaigns, not just first 3
+      const campaignsData = queryClient.getQueryData(['facebook', 'campaigns', accountId]) as FacebookCampaign[] | undefined;
+      campaignsData?.forEach(async (campaign: FacebookCampaign) => {
+        await prefetchAdSets(queryClient, campaign.id);
+        await prefetchMetrics(queryClient, 'campaign', campaign.id, 30);
+      });
+    }
+  };
 
-  const toggleAccount = useCallback((accountId: string) => {
-    console.log('🔄 SidebarExplorer: Toggling account:', accountId);
-    setExpandedAccounts(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(accountId)) {
-        newSet.delete(accountId);
-        // Clear active account if collapsing
-        if (activeAccountId === accountId) {
-          setActiveAccountId(null);
-        }
-      } else {
-        newSet.add(accountId);
-        setActiveAccountId(accountId);
-      }
-      return newSet;
-    });
-  }, [activeAccountId]);
+  // Toggle campaign expansion
+  const toggleCampaign = (campaignId: string) => {
+    const newState = !expandedCampaigns[campaignId];
+    setExpandedCampaigns(prev => ({ ...prev, [campaignId]: newState }));
+    
+    if (newState) {
+      setActiveCampaignId(campaignId);
+      
+      // Prefetch ads for all ad sets in this campaign
+      const adSetsData = queryClient.getQueryData(['facebook', 'adsets', campaignId]) as FacebookAdSet[] | undefined;
+      adSetsData?.forEach(async (adSet: FacebookAdSet) => {
+        await prefetchAds(queryClient, adSet.id);
+        await prefetchMetrics(queryClient, 'adset', adSet.id, 30);
+      });
+    }
+  };
 
-  const toggleCampaign = useCallback((campaignId: string) => {
-    console.log('🔄 SidebarExplorer: Toggling campaign:', campaignId);
-    setExpandedCampaigns(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(campaignId)) {
-        newSet.delete(campaignId);
-        // Clear active campaign if collapsing
-        if (activeCampaignId === campaignId) {
-          setActiveCampaignId(null);
-        }
-      } else {
-        newSet.add(campaignId);
-        setActiveCampaignId(campaignId);
-      }
-      return newSet;
-    });
-  }, [activeCampaignId]);
+  // Toggle ad set expansion
+  const toggleAdSet = (adSetId: string) => {
+    const newState = !expandedAdSets[adSetId];
+    setExpandedAdSets(prev => ({ ...prev, [adSetId]: newState }));
+    
+    if (newState) {
+      setActiveAdSetId(adSetId);
+      
+      // Prefetch metrics for all ads in this ad set
+      const adsData = queryClient.getQueryData(['facebook', 'ads', adSetId]) as FacebookAd[] | undefined;
+      adsData?.forEach(async (ad: FacebookAd) => {
+        await prefetchMetrics(queryClient, 'ad', ad.id, 30);
+      });
+    }
+  };
 
-  const toggleAdSet = useCallback((adSetId: string) => {
-    console.log('🔄 SidebarExplorer: Toggling ad set:', adSetId);
-    setExpandedAdSets(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(adSetId)) {
-        newSet.delete(adSetId);
-        // Clear active ad set if collapsing
-        if (activeAdSetId === adSetId) {
-          setActiveAdSetId(null);
-        }
-      } else {
-        newSet.add(adSetId);
-        setActiveAdSetId(adSetId);
-      }
-      return newSet;
-    });
-  }, [activeAdSetId]);
+  // Get status badge color
+  const getStatusColor = (status: string | number): string => {
+    const statusString = status.toString().toLowerCase();
+    
+    if (statusString === "active" || statusString === "1") {
+      return "bg-green-100 text-green-800 hover:bg-green-200";
+    } else if (statusString === "paused" || statusString === "2") {
+      return "bg-yellow-100 text-yellow-800 hover:bg-yellow-200";
+    } else if (statusString === "deleted" || statusString === "3" || statusString === "disabled") {
+      return "bg-red-100 text-red-800 hover:bg-red-200";
+    }
+    
+    return "bg-gray-100 text-gray-800 hover:bg-gray-200";
+  };
 
-  const toggleLeadNurturing = useCallback(() => {
-    console.log('🔄 SidebarExplorer: Toggling lead nurturing');
-    setLeadNurturingExpanded(prev => !prev);
-  }, []);
+  // Lead nurturing files (static for now)
+  const leadNurturingFiles: LeadNurturingFile[] = [
+    {
+      id: 'follow-up-fl',
+      name: 'follow-up.fl',
+      type: 'follow-up',
+      user_id: 'current-user',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+  ];
 
-  // ============================================================================
-  // Selection Handlers
-  // ============================================================================
+  const toggleLeadNurturing = () => {
+    setExpandedLeadNurturing(!expandedLeadNurturing);
+  };
 
-  const handleItemClick = useCallback((item: TaggableData) => {
-    console.log('🎯 SidebarExplorer: Item selected:', item);
-    onItemSelect(item);
-  }, [onItemSelect]);
-
-  const handleTagToggle = useCallback((
-    id: string,
-    name: string,
-    type: string,
-    data: TaggableData,
-    metadata?: Record<string, unknown>
-  ) => {
-    console.log('🏷️ SidebarExplorer: Toggling tag for:', type, id);
-    onToggleTag(id, name, type, data, metadata);
-  }, [onToggleTag]);
-
-  // ============================================================================
-  // Render Functions
-  // ============================================================================
-
-  const renderAdAccounts = () => (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between px-3 py-2">
-        <h3 className="text-sm font-semibold text-muted-foreground">Facebook Ad Accounts</h3>
-        <Badge variant="outline" className="text-xs">
-          {adAccounts.length}
-        </Badge>
+  return (
+    <div className="text-sm">
+      <div className="font-medium text-muted-foreground mb-1 px-2 flex items-center">
+        <Facebook className="w-3.5 h-3.5 mr-2" />
+        Ad Accounts
       </div>
-
+      
       {adAccounts.length === 0 ? (
-        <div className="px-3 py-4 text-center">
-          <Building2 className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-          <p className="text-sm text-muted-foreground">No ad accounts connected</p>
+        <div className="px-2 py-1 text-muted-foreground text-xs">
+          No ad accounts found
         </div>
       ) : (
-        adAccounts.map((account) => (
-          <div key={account.id} className="space-y-1">
-            <div
-              className={`flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer hover:bg-muted transition-colors ${
-                selectedItem && 'id' in selectedItem && selectedItem.id === account.id
-                  ? 'bg-primary text-primary-foreground'
-                  : ''
-              }`}
-              onClick={() => handleItemClick(account)}
-            >
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-4 w-4 p-0 hover:bg-transparent"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleAccount(account.id);
-                }}
+        <div className="space-y-0.5">
+          {adAccounts.map((account) => (
+            <div key={account.id} className="select-none">
+              <div 
+                className="flex items-center gap-1 px-2 py-1 hover:bg-muted rounded-md cursor-pointer"
+                onClick={() => toggleAccount(account.id)}
               >
-                {expandedAccounts.has(account.id) ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
-              </Button>
-              
-              <Facebook className="h-4 w-4 text-blue-600" />
-              
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{account.name}</div>
-                <div className="text-xs text-muted-foreground">{account.currency}</div>
-              </div>
-
-              <div className="flex items-center gap-1">
-                {onCreateCampaign && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCreateCampaign(account.id);
-                    }}
-                  >
-                    <Plus className="h-3 w-3" />
-                  </Button>
-                )}
-                
+                {expandedAccounts[account.id] ? 
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : 
+                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                }
+                <div 
+                  className="flex-1 truncate cursor-pointer hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectAdAccount(account);
+                  }}
+                >
+                  {account.name}
+                </div>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className={`h-6 w-6 p-0 ${
-                    isTagged(account.id, 'account') ? 'text-primary' : ''
-                  }`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleTagToggle(account.id, account.name, 'account', account);
-                  }}
-                >
-                  <MessageSquare className="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
-
-            {expandedAccounts.has(account.id) && renderCampaigns(account.id)}
-          </div>
-        ))
-      )}
-    </div>
-  );
-
-  const renderCampaigns = (accountId: string) => {
-    const campaigns = activeAccountId === accountId ? campaignsData : [];
-    const loading = activeAccountId === accountId && campaignsLoading;
-
-    return (
-      <div className="ml-6 space-y-1">
-        {loading ? (
-          <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            <span className="text-xs">Loading campaigns...</span>
-          </div>
-        ) : campaigns && campaigns.length > 0 ? (
-          campaigns.map((campaign) => (
-            <div key={campaign.id} className="space-y-1">
-              <div
-                className={`flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer hover:bg-muted transition-colors ${
-                  selectedItem && 'id' in selectedItem && selectedItem.id === campaign.id
-                    ? 'bg-primary text-primary-foreground'
-                    : ''
-                }`}
-                onClick={() => handleItemClick(campaign)}
-              >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-4 w-4 p-0 hover:bg-transparent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleCampaign(campaign.id);
-                  }}
-                >
-                  {expandedCampaigns.has(campaign.id) ? (
-                    <ChevronDown className="h-3 w-3" />
-                  ) : (
-                    <ChevronRight className="h-3 w-3" />
+                  className={cn(
+                    "h-5 w-5 p-0 mr-1",
+                    isTagged(account.id, 'account') ? "text-primary" : "text-muted-foreground hover:text-primary"
                   )}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleTag?.(account.id, account.name, 'account', account);
+                  }}
+                >
+                  <Tag className="h-3 w-3" />
                 </Button>
-                
-                <Target className="h-4 w-4 text-green-600" />
-                
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{campaign.name}</div>
-                  <div className="flex items-center gap-2">
-                    <Badge className={`text-xs ${getStatusColor(campaign.status)}`}>
-                      {campaign.status}
-                    </Badge>
+                <Badge 
+                  variant="outline" 
+                  className={cn("text-[10px] px-1 py-0 h-4", getStatusColor(account.account_status))}
+                >
+                  {account.account_status === 1 ? "Active" : "Inactive"}
+                </Badge>
+              </div>
+              
+              {expandedAccounts[account.id] && (
+                <div className="ml-4 pl-2 border-l-2 border-muted">
+                  <div className="font-medium text-muted-foreground text-xs py-1 flex items-center justify-between">
+                    <div className="flex items-center">
+                      <BarChart2 className="w-3 h-3 mr-1" />
+                      Campaigns
+                    </div>
+                    {onCreateCampaign && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 w-5 p-0 hover:bg-primary/10"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCreateCampaign(account.id);
+                        }}
+                        title="Create new campaign"
+                      >
+                        <Plus className="h-3 w-3" />
+                      </Button>
+                    )}
                   </div>
-                </div>
-
-                <div className="flex items-center gap-1">
-                  {onCreateAdSet && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onCreateAdSet(campaign);
-                      }}
-                    >
-                      <Plus className="h-3 w-3" />
-                    </Button>
-                  )}
                   
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={`h-6 w-6 p-0 ${
-                      isTagged(campaign.id, 'campaign') ? 'text-primary' : ''
-                    }`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleTagToggle(campaign.id, campaign.name, 'campaign', campaign, {
-                        adAccountId: accountId
-                      });
-                    }}
-                  >
-                    <MessageSquare className="h-3 w-3" />
-                  </Button>
-                </div>
-              </div>
-
-              {expandedCampaigns.has(campaign.id) && renderAdSets(campaign.id)}
-            </div>
-          ))
-        ) : (
-          <div className="px-3 py-2 text-center">
-            <Target className="h-6 w-6 mx-auto text-muted-foreground mb-1" />
-            <p className="text-xs text-muted-foreground">No campaigns found</p>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const renderAdSets = (campaignId: string) => {
-    const adSets = activeCampaignId === campaignId ? adSetsData : [];
-    const loading = activeCampaignId === campaignId && adSetsLoading;
-
-    return (
-      <div className="ml-6 space-y-1">
-        {loading ? (
-          <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            <span className="text-xs">Loading ad sets...</span>
-          </div>
-        ) : adSets && adSets.length > 0 ? (
-          adSets.map((adSet) => (
-            <div key={adSet.id} className="space-y-1">
-              <div
-                className={`flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer hover:bg-muted transition-colors ${
-                  selectedItem && 'id' in selectedItem && selectedItem.id === adSet.id
-                    ? 'bg-primary text-primary-foreground'
-                    : ''
-                }`}
-                onClick={() => handleItemClick(adSet)}
-              >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-4 w-4 p-0 hover:bg-transparent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleAdSet(adSet.id);
-                  }}
-                >
-                  {expandedAdSets.has(adSet.id) ? (
-                    <ChevronDown className="h-3 w-3" />
-                  ) : (
-                    <ChevronRight className="h-3 w-3" />
+                  {isLoadingCampaigns && activeAccountId === account.id ? (
+                    <div className="text-xs py-1 flex items-center pl-1">
+                      <div className="h-2 w-2 mr-2 rounded-full border border-current border-t-transparent animate-spin" />
+                      Loading...
+                    </div>
+                  ) : campaigns.length === 0 && activeAccountId === account.id ? (
+                    <div className="text-xs text-muted-foreground py-1 pl-1">
+                      No campaigns found
+                    </div>
+                  ) : activeAccountId === account.id && (
+                    <div className="space-y-0.5">
+                      {campaigns.map((campaign) => (
+                        <div key={campaign.id} className="select-none">
+                          <div 
+                            className="flex items-center gap-1 px-2 py-1 hover:bg-muted rounded-md cursor-pointer"
+                            onClick={() => toggleCampaign(campaign.id)}
+                          >
+                            {expandedCampaigns[campaign.id] ? 
+                              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : 
+                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                            }
+                            <div 
+                              className="flex-1 truncate cursor-pointer hover:underline text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectCampaign(campaign, account.id);
+                              }}
+                            >
+                              {campaign.name}
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className={cn(
+                                "h-4 w-4 p-0 mr-1",
+                                isTagged(campaign.id, 'campaign') ? "text-primary" : "text-muted-foreground hover:text-primary"
+                              )}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleTag?.(campaign.id, campaign.name, 'campaign', campaign, { adAccountId: account.id });
+                              }}
+                            >
+                              <Tag className="h-2.5 w-2.5" />
+                            </Button>
+                            <Badge 
+                              variant="outline" 
+                              className={cn("text-[10px] px-1 py-0 h-4", getStatusColor(campaign.status))}
+                            >
+                              {campaign.status}
+                            </Badge>
+                          </div>
+                          
+                          {expandedCampaigns[campaign.id] && (
+                            <div className="ml-4 pl-2 border-l-2 border-muted">
+                              <div className="font-medium text-muted-foreground text-xs py-1 flex items-center justify-between">
+                                <div className="flex items-center">
+                                  <LayoutGrid className="w-3 h-3 mr-1" />
+                                  Ad Sets
+                                </div>
+                                {onCreateAdSet && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-4 w-4 p-0 text-muted-foreground hover:text-primary"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onCreateAdSet(campaign.id, campaign.name);
+                                    }}
+                                    title="Create new ad set"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                  </Button>
+                                )}
+                              </div>
+                              
+                              {isLoadingAdSets && activeCampaignId === campaign.id ? (
+                                <div className="text-xs py-1 flex items-center pl-1">
+                                  <div className="h-2 w-2 mr-2 rounded-full border border-current border-t-transparent animate-spin" />
+                                  Loading...
+                                </div>
+                              ) : adSets.length === 0 && activeCampaignId === campaign.id ? (
+                                <div className="text-xs text-muted-foreground py-1 pl-1">
+                                  No ad sets found
+                                </div>
+                              ) : activeCampaignId === campaign.id && (
+                                <div className="space-y-0.5">
+                                  {adSets.map((adSet) => (
+                                    <div key={adSet.id} className="select-none">
+                                      <div 
+                                        className="flex items-center gap-1 px-2 py-1 hover:bg-muted rounded-md cursor-pointer"
+                                        onClick={() => toggleAdSet(adSet.id)}
+                                      >
+                                        {expandedAdSets[adSet.id] ? 
+                                          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : 
+                                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                                        }
+                                        <div 
+                                          className="flex-1 truncate cursor-pointer hover:underline text-xs"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onSelectAdSet(adSet, campaign.id);
+                                          }}
+                                        >
+                                          {adSet.name}
+                                        </div>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className={cn(
+                                            "h-4 w-4 p-0 mr-1",
+                                            isTagged(adSet.id, 'adset') ? "text-primary" : "text-muted-foreground hover:text-primary"
+                                          )}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onToggleTag?.(adSet.id, adSet.name, 'adset', adSet, { campaignId: campaign.id });
+                                          }}
+                                        >
+                                          <Tag className="h-2.5 w-2.5" />
+                                        </Button>
+                                        <Badge 
+                                          variant="outline" 
+                                          className={cn("text-[10px] px-1 py-0 h-4", getStatusColor(adSet.status))}
+                                        >
+                                          {adSet.status}
+                                        </Badge>
+                                      </div>
+                                      
+                                      {expandedAdSets[adSet.id] && (
+                                        <div className="ml-4 pl-2 border-l-2 border-muted">
+                                          <div className="font-medium text-muted-foreground text-xs py-1 flex items-center justify-between">
+                                            <div className="flex items-center">
+                                              <Image className="w-3 h-3 mr-1" aria-label="Ads section icon" />
+                                              Ads
+                                            </div>
+                                            {onCreateAd && (
+                                              <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-4 w-4 p-0 text-muted-foreground hover:text-primary"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  onCreateAd(adSet.id, adSet.name, account.id);
+                                                }}
+                                                title="Create new ad"
+                                              >
+                                                <Plus className="h-3 w-3" />
+                                              </Button>
+                                            )}
+                                          </div>
+                                          
+                                          {isLoadingAds && activeAdSetId === adSet.id ? (
+                                            <div className="text-xs py-1 flex items-center pl-1">
+                                              <div className="h-2 w-2 mr-2 rounded-full border border-current border-t-transparent animate-spin" />
+                                              Loading...
+                                            </div>
+                                          ) : ads.length === 0 && activeAdSetId === adSet.id ? (
+                                            <div className="text-xs text-muted-foreground py-1 pl-1">
+                                              No ads found
+                                            </div>
+                                          ) : activeAdSetId === adSet.id && (
+                                            <div className="space-y-0.5">
+                                              {ads.map((ad) => (
+                                                <div key={ad.id} className="select-none">
+                                                  <div 
+                                                    className="flex items-center gap-1 px-2 py-1 hover:bg-muted rounded-md cursor-pointer"
+                                                    onClick={() => {
+                                                      onSelectAd(ad, adSet.id);
+                                                    }}
+                                                  >
+                                                    <div className="w-3.5"></div>
+                                                    <div className="flex-1 truncate text-xs">
+                                                      {ad.name}
+                                                    </div>
+                                                    <Button
+                                                      variant="ghost"
+                                                      size="sm"
+                                                      className={cn(
+                                                        "h-4 w-4 p-0 mr-1",
+                                                        isTagged(ad.id, 'ad') ? "text-primary" : "text-muted-foreground hover:text-primary"
+                                                      )}
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onToggleTag?.(ad.id, ad.name, 'ad', ad, { adSetId: adSet.id });
+                                                      }}
+                                                    >
+                                                      <Tag className="h-2.5 w-2.5" />
+                                                    </Button>
+                                                    <Badge 
+                                                      variant="outline" 
+                                                      className={cn("text-[10px] px-1 py-0 h-4", getStatusColor(ad.status))}
+                                                    >
+                                                      {ad.status}
+                                                    </Badge>
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   )}
-                </Button>
-                
-                <Users className="h-4 w-4 text-purple-600" />
-                
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{adSet.name}</div>
-                  <div className="flex items-center gap-2">
-                    <Badge className={`text-xs ${getStatusColor(adSet.status)}`}>
-                      {adSet.status}
-                    </Badge>
-                  </div>
                 </div>
-
-                <div className="flex items-center gap-1">
-                  {onCreateAd && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onCreateAd(adSet);
-                      }}
-                    >
-                      <Plus className="h-3 w-3" />
-                    </Button>
-                  )}
-                  
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={`h-6 w-6 p-0 ${
-                      isTagged(adSet.id, 'adset') ? 'text-primary' : ''
-                    }`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleTagToggle(adSet.id, adSet.name, 'adset', adSet, {
-                        campaignId: campaignId
-                      });
-                    }}
-                  >
-                    <MessageSquare className="h-3 w-3" />
-                  </Button>
-                </div>
-              </div>
-
-              {expandedAdSets.has(adSet.id) && renderAds(adSet.id)}
-            </div>
-          ))
-        ) : (
-          <div className="px-3 py-2 text-center">
-            <Users className="h-6 w-6 mx-auto text-muted-foreground mb-1" />
-            <p className="text-xs text-muted-foreground">No ad sets found</p>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const renderAds = (adSetId: string) => {
-    const ads = activeAdSetId === adSetId ? adsData : [];
-    const loading = activeAdSetId === adSetId && adsLoading;
-
-    return (
-      <div className="ml-6 space-y-1">
-        {loading ? (
-          <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            <span className="text-xs">Loading ads...</span>
-          </div>
-        ) : ads && ads.length > 0 ? (
-          ads.map((ad) => (
-            <div
-              key={ad.id}
-              className={`flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer hover:bg-muted transition-colors ${
-                selectedItem && 'id' in selectedItem && selectedItem.id === ad.id
-                  ? 'bg-primary text-primary-foreground'
-                  : ''
-              }`}
-              onClick={() => handleItemClick(ad)}
-            >
-              <div className="w-4" /> {/* Spacer for alignment */}
-              
-              <MousePointer className="h-4 w-4 text-orange-600" />
-              
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{ad.name}</div>
-                <div className="flex items-center gap-2">
-                  <Badge className={`text-xs ${getStatusColor(ad.status)}`}>
-                    {ad.status}
-                  </Badge>
-                </div>
-              </div>
-
-              <Button
-                variant="ghost"
-                size="sm"
-                className={`h-6 w-6 p-0 ${
-                  isTagged(ad.id, 'ad') ? 'text-primary' : ''
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleTagToggle(ad.id, ad.name, 'ad', ad, {
-                    adSetId: adSetId
-                  });
-                }}
-              >
-                <MessageSquare className="h-3 w-3" />
-              </Button>
-            </div>
-          ))
-        ) : (
-          <div className="px-3 py-2 text-center">
-            <MousePointer className="h-6 w-6 mx-auto text-muted-foreground mb-1" />
-            <p className="text-xs text-muted-foreground">No ads found</p>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const renderLeadNurturing = () => (
-    <div className="space-y-1">
-      <div
-        className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-muted transition-colors"
-        onClick={toggleLeadNurturing}
-      >
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-4 w-4 p-0 hover:bg-transparent"
-        >
-          {leadNurturingExpanded ? (
-            <ChevronDown className="h-3 w-3" />
-          ) : (
-            <ChevronRight className="h-3 w-3" />
-          )}
-        </Button>
-        
-        <Zap className="h-4 w-4 text-purple-600" />
-        
-        <div className="flex-1">
-          <div className="text-sm font-semibold">Lead Nurturing</div>
-          <div className="text-xs text-muted-foreground">AI Avatar Creation</div>
-        </div>
-
-        <Badge variant="outline" className="text-xs">
-          {leadNurturingFiles.length}
-        </Badge>
-      </div>
-
-      {leadNurturingExpanded && (
-        <div className="ml-6 space-y-1">
-          {leadNurturingFiles.map((file) => (
-            <div
-              key={file.id}
-              className={`flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer hover:bg-muted transition-colors ${
-                selectedItem && 'id' in selectedItem && selectedItem.id === file.id
-                  ? 'bg-primary text-primary-foreground'
-                  : ''
-              }`}
-              onClick={() => handleItemClick(file)}
-            >
-              <div className="w-4" /> {/* Spacer for alignment */}
-              
-              <Zap className="h-4 w-4 text-purple-600" />
-              
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{file.name}</div>
-                <div className="text-xs text-muted-foreground">AI-powered sequences</div>
-              </div>
-
-              <Button
-                variant="ghost"
-                size="sm"
-                className={`h-6 w-6 p-0 ${
-                  isTagged(file.id, 'follow-up') ? 'text-primary' : ''
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleTagToggle(file.id, file.name, 'follow-up', file);
-                }}
-              >
-                <MessageSquare className="h-3 w-3" />
-              </Button>
+              )}
             </div>
           ))}
         </div>
       )}
-    </div>
-  );
-
-  // ============================================================================
-  // Main Render
-  // ============================================================================
-
-  console.log('🎨 SidebarExplorer: Rendering with state:', {
-    adAccountsCount: adAccounts.length,
-    expandedAccounts: expandedAccounts.size,
-    expandedCampaigns: expandedCampaigns.size,
-    expandedAdSets: expandedAdSets.size,
-    selectedItem: selectedItem ? ('name' in selectedItem ? selectedItem.name : selectedItem.id) : null,
-    leadNurturingExpanded
-  });
-
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="space-y-6 p-4">
-        {/* Facebook Ad Accounts Section */}
-        {renderAdAccounts()}
-
-        {/* Separator */}
-        <div className="border-t" />
-
-        {/* Lead Nurturing Section */}
-        {renderLeadNurturing()}
+      
+      {/* Lead Nurturing Section */}
+      <div className="mt-6">
+        <div className="font-medium text-muted-foreground mb-1 px-2 flex items-center">
+          <Users className="w-3.5 h-3.5 mr-2" />
+          Lead Nurturing
+        </div>
+        
+        <div className="space-y-0.5">
+          <div className="select-none">
+            <div 
+              className="flex items-center gap-1 px-2 py-1 hover:bg-muted rounded-md cursor-pointer"
+              onClick={toggleLeadNurturing}
+            >
+              {expandedLeadNurturing ? 
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : 
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              }
+              <span className="flex-1 truncate">AI Avatar Constructor</span>
+            </div>
+            
+            {expandedLeadNurturing && (
+              <div className="ml-4 pl-2 border-l-2 border-muted">
+                {leadNurturingFiles.map((file) => (
+                  <div key={file.id} className="select-none">
+                    <div 
+                      className="flex items-center gap-1 px-2 py-1 hover:bg-muted rounded-md cursor-pointer"
+                      onClick={() => onSelectLeadNurturingFile?.(file)}
+                    >
+                      <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                      <div className="flex-1 truncate cursor-pointer hover:underline text-xs">
+                        {file.name}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={cn(
+                          "h-4 w-4 p-0 mr-1",
+                          isTagged(file.id, 'file') ? "text-primary" : "text-muted-foreground hover:text-primary"
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleTag?.(file.id, file.name, 'file', file);
+                        }}
+                      >
+                        <Tag className="h-2.5 w-2.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
-}
+} 
