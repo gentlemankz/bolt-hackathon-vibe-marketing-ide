@@ -1,387 +1,237 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useEffect, useState } from 'react';
 import { ContextData } from '@/lib/ai-api-client';
 import { FacebookAdAccount, FacebookCampaign, FacebookAdSet, FacebookAd } from '@/lib/types';
 
-// ============================================================================
-// TypeScript Interfaces
-// ============================================================================
-
-/**
- * Selected item structure for legacy mode
- */
-interface SelectedItem {
-  type: 'account' | 'campaign' | 'adset' | 'ad';
-  item: FacebookAdAccount | FacebookCampaign | FacebookAdSet | FacebookAd;
-  parentId?: string;
-}
-
-/**
- * Legacy props structure
- */
-interface LegacyProps {
-  selectedItem?: SelectedItem;
+interface UseAIContextPropsOld {
+  selectedItem?: {
+    type: 'account' | 'campaign' | 'adset' | 'ad';
+    item: FacebookAdAccount | FacebookCampaign | FacebookAdSet | FacebookAd;
+    parentId?: string;
+  } | null;
   adAccounts?: FacebookAdAccount[];
-  campaigns?: FacebookCampaign[] | Record<string, FacebookCampaign[]>;
-  adSets?: FacebookAdSet[] | Record<string, FacebookAdSet[]>;
-  ads?: FacebookAd[] | Record<string, FacebookAd[]>;
+  campaigns?: Record<string, FacebookCampaign[]>;
+  adSets?: Record<string, FacebookAdSet[]>;
+  ads?: Record<string, FacebookAd[]>;
   metrics?: Record<string, unknown>;
-  filters?: Record<string, unknown>;
   timeRange?: string;
+  filters?: Record<string, unknown>;
   currentView?: string;
 }
 
-/**
- * New props structure with generateContext function
- */
-interface NewProps {
+interface UseAIContextPropsNew {
   generateContext: () => ContextData;
   dependencies?: unknown[];
 }
 
-/**
- * Union type for all possible props
- */
-type AIContextProps = NewProps | LegacyProps;
+type UseAIContextProps = UseAIContextPropsOld | UseAIContextPropsNew;
 
-/**
- * Mentionable item structure
- */
-interface MentionableItem {
-  id: string;
-  name: string;
-  type: 'account' | 'campaign' | 'adset' | 'ad';
-  parentName?: string;
+function isNewProps(props: UseAIContextProps): props is UseAIContextPropsNew {
+  return 'generateContext' in props;
 }
 
-/**
- * Context summary structure
- */
-interface ContextSummary {
-  accountsCount: number;
-  campaignsCount: number;
-  adsetsCount: number;
-  adsCount: number;
-  currentView: string;
-  timeRange: string;
-  description: string;
-}
-
-// ============================================================================
-// Type Guard Functions
-// ============================================================================
-
-/**
- * Type guard to check if props contain generateContext function (new mode)
- */
-function isNewProps(props: AIContextProps): props is NewProps {
-  return 'generateContext' in props && typeof props.generateContext === 'function';
-}
-
-/**
- * Type guard to check if props are in legacy format
- */
-function isLegacyProps(props: AIContextProps): props is LegacyProps {
-  return !isNewProps(props);
-}
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-/**
- * Flatten arrays or objects of arrays into a single array
- */
-function flattenToArray<T>(data: T[] | Record<string, T[]> | undefined): T[] {
-  if (!data) return [];
+export function useAIContext(props: UseAIContextProps = {}) {
+  const [contextData, setContextData] = useState<ContextData | null>(null);
+  const isNew = isNewProps(props);
   
-  if (Array.isArray(data)) {
-    return data;
-  }
+  // Extract props for both approaches
+  const newProps = isNew ? props : null;
+  const oldProps = !isNew ? props : null;
   
-  // If it's an object with arrays as values, flatten all arrays
-  return Object.values(data).flat();
-}
-
-/**
- * Generate current view name based on selected item
- */
-function generateCurrentView(selectedItem?: SelectedItem, fallbackView?: string): string {
-  if (!selectedItem) {
-    return fallbackView || 'ad-accounts-overview';
-  }
-  
-  const { type, item } = selectedItem;
-  
-  switch (type) {
-    case 'account':
-      return `account-${item.name.toLowerCase().replace(/\s+/g, '-')}`;
-    case 'campaign':
-      return `campaign-${item.name.toLowerCase().replace(/\s+/g, '-')}`;
-    case 'adset':
-      return `adset-${item.name.toLowerCase().replace(/\s+/g, '-')}`;
-    case 'ad':
-      return `ad-${item.name.toLowerCase().replace(/\s+/g, '-')}`;
-    default:
-      return 'marketing-overview';
-  }
-}
-
-/**
- * Build selected items array from selectedItem prop
- */
-function buildSelectedItems(selectedItem?: SelectedItem): Record<string, unknown>[] {
-  if (!selectedItem) return [];
-  
-  return [{
-    id: selectedItem.item.id,
-    name: selectedItem.item.name,
-    type: selectedItem.type,
-    ...(selectedItem.parentId && { parentId: selectedItem.parentId }),
-    ...selectedItem.item
-  }];
-}
-
-// ============================================================================
-// Main Hook Implementation
-// ============================================================================
-
-/**
- * AI Context Management Hook
- * 
- * Supports two modes:
- * 1. New Props Mode: Uses generateContext function
- * 2. Legacy Props Mode: Constructs context from individual props
- */
-export function useAIContext(props: AIContextProps) {
-  const [contextData, setContextData] = useState<ContextData>({});
-
-  // ============================================================================
-  // New Props Mode Logic
-  // ============================================================================
-
+  // New approach effect
   useEffect(() => {
-    if (isNewProps(props)) {
-      console.log('🔄 useAIContext: Running in new props mode');
-      
-      try {
-        const newContext = props.generateContext();
-        setContextData(newContext);
-        
-        console.log('✅ useAIContext: Context generated successfully', {
-          campaigns: newContext.campaigns?.length || 0,
-          adsets: newContext.adsets?.length || 0,
-          ads: newContext.ads?.length || 0,
-          ad_accounts: newContext.ad_accounts?.length || 0
-        });
-      } catch (error) {
-        console.error('❌ useAIContext: Error generating context:', error);
-        setContextData({});
-      }
+    if (newProps) {
+      const newContext = newProps.generateContext();
+      setContextData(newContext);
     }
-  }, isNewProps(props) ? props.dependencies || [] : []);
-
-  // ============================================================================
-  // Legacy Props Mode Logic
-  // ============================================================================
-
-  useEffect(() => {
-    if (isLegacyProps(props)) {
-      console.log('🔄 useAIContext: Running in legacy props mode');
-      
-      try {
-        // Flatten all data arrays
-        const flattenedCampaigns = flattenToArray(props.campaigns);
-        const flattenedAdSets = flattenToArray(props.adSets);
-        const flattenedAds = flattenToArray(props.ads);
-        const adAccounts = props.adAccounts || [];
-        
-        // Build context data
-        const legacyContext: ContextData = {
-          campaigns: flattenedCampaigns,
-          adsets: flattenedAdSets,
-          ads: flattenedAds,
-          ad_accounts: adAccounts,
-          metrics: props.metrics,
-          selected_items: buildSelectedItems(props.selectedItem),
-          current_view: generateCurrentView(props.selectedItem, props.currentView),
-          date_range: {
-            days: props.timeRange || "30"
-          }
-        };
-        
-        setContextData(legacyContext);
-        
-        console.log('✅ useAIContext: Legacy context built successfully', {
-          campaigns: flattenedCampaigns.length,
-          adsets: flattenedAdSets.length,
-          ads: flattenedAds.length,
-          ad_accounts: adAccounts.length,
-          selected_items: legacyContext.selected_items?.length || 0,
-          current_view: legacyContext.current_view
-        });
-      } catch (error) {
-        console.error('❌ useAIContext: Error building legacy context:', error);
-        setContextData({});
-      }
+  }, [newProps, ...(newProps?.dependencies || [])]);
+  
+  // Old approach context generation
+  const generateContextOld = useCallback((): ContextData => {
+    if (!oldProps) return {};
+    
+    const {
+      selectedItem,
+      adAccounts = [],
+      campaigns = {},
+      adSets = {},
+      ads = {},
+      metrics = {},
+      timeRange = '30',
+      currentView = 'dashboard'
+    } = oldProps;
+    
+    // Flatten campaigns, ad sets, and ads for context
+    const allCampaigns = Object.values(campaigns).flat();
+    const allAdSets = Object.values(adSets).flat();
+    const allAds = Object.values(ads).flat();
+    
+    // Build selected items array with more detailed context
+    const selectedItems = [];
+    if (selectedItem) {
+      selectedItems.push({
+        type: selectedItem.type,
+        id: selectedItem.item.id,
+        name: selectedItem.item.name,
+        data: selectedItem.item,
+        parentId: selectedItem.parentId
+      });
     }
-  }, [
-    props,
-    // Dependencies for legacy mode
-    ...(isLegacyProps(props) ? [
-      props.selectedItem,
-      props.adAccounts,
-      props.campaigns,
-      props.adSets,
-      props.ads,
-      props.metrics,
-      props.filters,
-      props.timeRange,
-      props.currentView
-    ] : [])
-  ]);
 
-  // ============================================================================
-  // Context Summary
-  // ============================================================================
-
-  const contextSummary = useMemo((): ContextSummary => {
-    const accountsCount = contextData.ad_accounts?.length || 0;
-    const campaignsCount = contextData.campaigns?.length || 0;
-    const adsetsCount = contextData.adsets?.length || 0;
-    const adsCount = contextData.ads?.length || 0;
-    const currentView = contextData.current_view || 'overview';
-    const timeRange = contextData.date_range?.days || '30';
-    
-    // Build description string
-    const parts: string[] = [];
-    if (accountsCount > 0) parts.push(`${accountsCount} Ad Account${accountsCount !== 1 ? 's' : ''}`);
-    if (campaignsCount > 0) parts.push(`${campaignsCount} campaign${campaignsCount !== 1 ? 's' : ''}`);
-    if (adsetsCount > 0) parts.push(`${adsetsCount} adset${adsetsCount !== 1 ? 's' : ''}`);
-    if (adsCount > 0) parts.push(`${adsCount} ad${adsCount !== 1 ? 's' : ''}`);
-    
-    const description = parts.length > 0 
-      ? `Context: ${parts.join(', ')}`
-      : 'Context: No data available';
+    // Generate dynamic current view based on selection
+    let dynamicView = currentView;
+    if (selectedItem) {
+      switch (selectedItem.type) {
+        case 'account':
+          dynamicView = `ad-account-${selectedItem.item.name}`;
+          break;
+        case 'campaign':
+          dynamicView = `campaign-${selectedItem.item.name}`;
+          break;
+        case 'adset':
+          dynamicView = `adset-${selectedItem.item.name}`;
+          break;
+        case 'ad':
+          dynamicView = `ad-${selectedItem.item.name}`;
+          break;
+        default:
+          dynamicView = 'marketing-overview';
+      }
+    } else if (adAccounts.length > 0) {
+      dynamicView = 'ad-accounts-overview';
+    }
     
     return {
-      accountsCount,
-      campaignsCount,
-      adsetsCount,
-      adsCount,
-      currentView,
-      timeRange,
+      campaigns: allCampaigns as unknown as Record<string, unknown>[],
+      adsets: allAdSets as unknown as Record<string, unknown>[],
+      ads: allAds as unknown as Record<string, unknown>[],
+      metrics: metrics,
+      current_view: dynamicView,
+      selected_items: selectedItems,
+      date_range: timeRange ? { period: timeRange } : undefined,
+      ad_accounts: adAccounts as unknown as Record<string, unknown>[],
+    };
+  }, [oldProps]);
+
+  const contextOld = useMemo(() => oldProps ? generateContextOld() : null, [generateContextOld, oldProps]);
+
+  const getContextSummary = useCallback(() => {
+    const currentContext = isNew ? contextData : contextOld;
+    
+    if (!currentContext) {
+      return {
+        accounts: 0,
+        campaigns: 0,
+        adSets: 0,
+        ads: 0,
+        selectedType: null,
+        selectedName: null,
+        timeRange: '30',
+        currentView: 'loading',
+        description: 'Loading...'
+      };
+    }
+    
+    const accounts = currentContext.ad_accounts?.length || 0;
+    const campaigns = currentContext.campaigns?.length || 0;
+    const adSets = currentContext.adsets?.length || 0;
+    const ads = currentContext.ads?.length || 0;
+    
+    let description = 'Marketing Overview';
+    if (accounts > 0) {
+      const parts = [];
+      if (accounts > 0) parts.push(`${accounts} Ad Account${accounts > 1 ? 's' : ''}`);
+      if (campaigns > 0) parts.push(`${campaigns} campaign${campaigns > 1 ? 's' : ''}`);
+      if (adSets > 0) parts.push(`${adSets} ad set${adSets > 1 ? 's' : ''}`);
+      if (ads > 0) parts.push(`${ads} ad${ads > 1 ? 's' : ''}`);
+      description = `Context: ${parts.join('\n')}`;
+    }
+    
+    return {
+      accounts,
+      campaigns,
+      adSets,
+      ads,
+      selectedType: null,
+      selectedName: null,
+      timeRange: currentContext.date_range?.period || '30',
+      currentView: currentContext.current_view || 'marketing-dashboard',
       description
     };
-  }, [contextData]);
-
-  // ============================================================================
-  // Generate Context Function
-  // ============================================================================
-
-  const generateContext = useCallback((): ContextData => {
-    if (isNewProps(props)) {
-      return props.generateContext();
+  }, [isNew, contextData, contextOld]);
+  
+  // Get all available items for @ mentions
+  const getAllMentionableItems = useCallback(() => {
+    const currentContext = isNew ? contextData : contextOld;
+    
+    if (!currentContext) {
+      console.log('getAllMentionableItems: No context data available');
+      return [];
     }
     
-    // For legacy mode, return current contextData
-    return contextData;
-  }, [props, contextData]);
-
-  // ============================================================================
-  // Get All Mentionable Items
-  // ============================================================================
-
-  const getAllMentionableItems = useCallback((): MentionableItem[] => {
-    console.log('🔍 useAIContext: Collecting mentionable items...');
-    
-    const items: MentionableItem[] = [];
-    
-    // Create lookup maps for parent names
-    const accountsMap = new Map<string, string>();
-    const campaignsMap = new Map<string, { name: string; accountId: string }>();
-    const adsetsMap = new Map<string, { name: string; campaignId: string }>();
-    
-    // Build account lookup
-    if (contextData.ad_accounts) {
-      contextData.ad_accounts.forEach(account => {
-        accountsMap.set(account.id, account.name);
-        items.push({
-          id: account.id,
-          name: account.name,
-          type: 'account'
-        });
-      });
-    }
-    
-    // Build campaign lookup and add campaigns
-    if (contextData.campaigns) {
-      contextData.campaigns.forEach(campaign => {
-        const accountName = accountsMap.get(campaign.ad_account_id);
-        campaignsMap.set(campaign.id, { 
-          name: campaign.name, 
-          accountId: campaign.ad_account_id 
-        });
-        
-        items.push({
-          id: campaign.id,
-          name: campaign.name,
-          type: 'campaign',
-          parentName: accountName
-        });
-      });
-    }
-    
-    // Build adset lookup and add adsets
-    if (contextData.adsets) {
-      contextData.adsets.forEach(adset => {
-        const campaignInfo = campaignsMap.get(adset.campaign_id);
-        adsetsMap.set(adset.id, { 
-          name: adset.name, 
-          campaignId: adset.campaign_id 
-        });
-        
-        items.push({
-          id: adset.id,
-          name: adset.name,
-          type: 'adset',
-          parentName: campaignInfo?.name
-        });
-      });
-    }
-    
-    // Add ads
-    if (contextData.ads) {
-      contextData.ads.forEach(ad => {
-        const adsetInfo = adsetsMap.get(ad.ad_set_id);
-        
-        items.push({
-          id: ad.id,
-          name: ad.name,
-          type: 'ad',
-          parentName: adsetInfo?.name
-        });
-      });
-    }
-    
-    console.log('✅ useAIContext: Mentionable items collected', {
-      total: items.length,
-      accounts: items.filter(i => i.type === 'account').length,
-      campaigns: items.filter(i => i.type === 'campaign').length,
-      adsets: items.filter(i => i.type === 'adset').length,
-      ads: items.filter(i => i.type === 'ad').length
+    console.log('getAllMentionableItems: Processing context data:', {
+      accounts: currentContext.ad_accounts?.length || 0,
+      campaigns: currentContext.campaigns?.length || 0,
+      adsets: currentContext.adsets?.length || 0,
+      ads: currentContext.ads?.length || 0
     });
     
+    const items: Array<{
+      id: string;
+      name: string;
+      type: 'account' | 'campaign' | 'adset' | 'ad';
+      parentName?: string;
+    }> = [];
+
+    // Add ad accounts
+    currentContext.ad_accounts?.forEach((account: Record<string, unknown>) => {
+      items.push({
+        id: account.id as string,
+        name: account.name as string,
+        type: 'account'
+      });
+    });
+
+    // Add campaigns
+    currentContext.campaigns?.forEach((campaign: Record<string, unknown>) => {
+      const account = currentContext.ad_accounts?.find((acc: Record<string, unknown>) => acc.id === campaign.ad_account_id);
+      items.push({
+        id: campaign.id as string,
+        name: campaign.name as string,
+        type: 'campaign',
+        parentName: account?.name as string
+      });
+    });
+
+    // Add ad sets
+    currentContext.adsets?.forEach((adSet: Record<string, unknown>) => {
+      const campaign = currentContext.campaigns?.find((c: Record<string, unknown>) => c.id === adSet.campaign_id);
+      items.push({
+        id: adSet.id as string,
+        name: adSet.name as string,
+        type: 'adset',
+        parentName: campaign?.name as string
+      });
+    });
+
+    // Add ads
+    currentContext.ads?.forEach((ad: Record<string, unknown>) => {
+      const adSet = currentContext.adsets?.find((as: Record<string, unknown>) => as.id === ad.ad_set_id);
+      items.push({
+        id: ad.id as string,
+        name: ad.name as string,
+        type: 'ad',
+        parentName: adSet?.name as string
+      });
+    });
+
+    console.log('getAllMentionableItems: Found', items.length, 'mentionable items:', items.map(i => `${i.type}: ${i.name}`));
     return items;
-  }, [contextData]);
-
-  // ============================================================================
-  // Return Hook Interface
-  // ============================================================================
-
+  }, [isNew, contextData, contextOld]);
+  
   return {
-    contextData,
-    contextSummary,
-    generateContext,
-    getAllMentionableItems
+    context: isNew ? contextData : contextOld,
+    contextSummary: getContextSummary(),
+    generateContext: isNew ? newProps?.generateContext : generateContextOld,
+    getAllMentionableItems,
   };
-}
+} 
