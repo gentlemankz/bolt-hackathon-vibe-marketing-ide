@@ -5,16 +5,18 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Facebook, AlertTriangle } from "lucide-react";
+import { Facebook, AlertTriangle, CheckCircle } from "lucide-react";
 
 export function DisconnectFacebookForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
   const router = useRouter();
   
   const handleDisconnect = async () => {
     setIsLoading(true);
     setError(null);
+    setSuccess(false);
     
     try {
       const response = await fetch("/api/facebook/disconnect", {
@@ -24,15 +26,22 @@ export function DisconnectFacebookForm() {
         },
       });
       
+      const data = await response.json();
+      
       if (!response.ok) {
-        const data = await response.json();
         throw new Error(data.error || "Failed to disconnect account");
       }
       
+      // Show success message briefly before redirecting
+      setSuccess(true);
+      
       // Redirect to dashboard after successful disconnection
-      router.push("/dashboard?success=disconnected");
+      setTimeout(() => {
+        router.push("/dashboard?success=disconnected");
+      }, 1500);
     } catch (error) {
-      setError(error instanceof Error ? error.message : "An error occurred");
+      console.error('Disconnect error:', error);
+      setError(error instanceof Error ? error.message : "An error occurred while disconnecting your account");
       setIsLoading(false);
     }
   };
@@ -40,6 +49,30 @@ export function DisconnectFacebookForm() {
   const handleCancel = () => {
     router.push("/dashboard");
   };
+  
+  if (success) {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            <CardTitle>Successfully Disconnected</CardTitle>
+          </div>
+          <CardDescription>
+            Your Facebook account has been disconnected and all data has been cleared.
+          </CardDescription>
+        </CardHeader>
+        
+        <CardContent>
+          <div className="text-center py-4">
+            <p className="text-sm text-muted-foreground">
+              Redirecting you to the dashboard...
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
   
   return (
     <Card>
@@ -73,7 +106,7 @@ export function DisconnectFacebookForm() {
             <li>All connected Facebook ad accounts</li>
             <li>Campaign data and metrics</li>
             <li>Ad sets and ads information</li>
-            <li>Business accounts</li>
+            <li>Sync jobs and historical data</li>
             <li>Authentication tokens</li>
           </ul>
           <p className="mt-4">You can reconnect your Facebook account at any time, but you&apos;ll need to set up your ad accounts again.</p>
