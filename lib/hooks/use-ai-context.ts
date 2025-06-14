@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useEffect, useState } from 'react';
+import { useCallback, useMemo, useEffect, useState, useRef } from 'react';
 import { ContextData } from '@/lib/ai-api-client';
 import { FacebookAdAccount, FacebookCampaign, FacebookAdSet, FacebookAd } from '@/lib/types';
 
@@ -37,13 +37,51 @@ export function useAIContext(props: UseAIContextProps = {}) {
   const newProps = isNew ? props : null;
   const oldProps = !isNew ? props : null;
   
-  // New approach effect
+  // Use refs to track previous dependencies to avoid infinite loops
+  const prevDependenciesRef = useRef<unknown[]>([]);
+  const generateContextRef = useRef<(() => ContextData) | null>(null);
+  const prevNewPropsRef = useRef<UseAIContextPropsNew | null>(null);
+  
+  // Update refs when props change
+  if (newProps) {
+    generateContextRef.current = newProps.generateContext;
+  }
+  
+  // New approach effect with stable dependencies
   useEffect(() => {
-    if (newProps) {
-      const newContext = newProps.generateContext();
-      setContextData(newContext);
+    if (newProps && generateContextRef.current) {
+      // Check if dependencies actually changed
+      const currentDeps = newProps.dependencies || [];
+      const prevDeps = prevDependenciesRef.current;
+      const prevNewProps = prevNewPropsRef.current;
+      
+      // Check if newProps reference changed (but not the function itself)
+      const propsChanged = prevNewProps !== newProps;
+      
+      // Simple shallow comparison for dependencies
+      const depsChanged = currentDeps.length !== prevDeps.length || 
+        currentDeps.some((dep, index) => dep !== prevDeps[index]);
+      
+      if (depsChanged || !contextData || (propsChanged && !prevNewProps)) {
+        console.log('AI Context: Regenerating context due to dependency change', {
+          depsChanged,
+          propsChanged,
+          hasContextData: !!contextData,
+          currentDeps,
+          prevDeps
+        });
+        
+        try {
+          const newContext = generateContextRef.current();
+          setContextData(newContext);
+          prevDependenciesRef.current = [...currentDeps];
+          prevNewPropsRef.current = newProps;
+        } catch (error) {
+          console.error('Error generating AI context:', error);
+        }
+      }
     }
-  }, [newProps, ...(newProps?.dependencies || [])]);
+  }, [newProps, contextData]); // Include newProps to satisfy ESLint
   
   // Old approach context generation
   const generateContextOld = useCallback((): ContextData => {
@@ -164,16 +202,8 @@ export function useAIContext(props: UseAIContextProps = {}) {
     const currentContext = isNew ? contextData : contextOld;
     
     if (!currentContext) {
-      console.log('getAllMentionableItems: No context data available');
       return [];
     }
-    
-    console.log('getAllMentionableItems: Processing context data:', {
-      accounts: currentContext.ad_accounts?.length || 0,
-      campaigns: currentContext.campaigns?.length || 0,
-      adsets: currentContext.adsets?.length || 0,
-      ads: currentContext.ads?.length || 0
-    });
     
     const items: Array<{
       id: string;
@@ -224,7 +254,6 @@ export function useAIContext(props: UseAIContextProps = {}) {
       });
     });
 
-    console.log('getAllMentionableItems: Found', items.length, 'mentionable items:', items.map(i => `${i.type}: ${i.name}`));
     return items;
   }, [isNew, contextData, contextOld]);
   
