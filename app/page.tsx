@@ -2,23 +2,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { 
-  ArrowRight, 
-  Zap, 
-  Target, 
-  Users, 
-  Bot, 
-  BarChart3, 
-  Sync, 
-  Shield, 
-  TrendingUp,
-  CheckCircle,
-  Star,
-  Play,
-  Globe,
-  MessageSquare,
-  RefreshCw
-} from 'lucide-react';
+import { ArrowRight, Zap, Target, Users, Bot, BarChart3, FolderSync as Sync, Shield, TrendingUp, CheckCircle, Star, Play, Globe, MessageSquare, RefreshCw } from 'lucide-react';
 import { Footer } from '@/components/footer';
 
 export default function HomePage() {
