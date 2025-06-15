@@ -22,6 +22,14 @@ const nextConfig = {
       },
     ],
   },
+  logging: {
+    fetches: {
+      fullUrl: true,
+    },
+  },
+  experimental: {
+    serverComponentsExternalPackages: ['@supabase/ssr'],
+  },
 };
 
 export default nextConfig;
