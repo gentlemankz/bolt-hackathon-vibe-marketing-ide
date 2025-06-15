@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowRight, Zap, Target, Users, Bot, BarChart3, FolderSync as Sync, Shield, TrendingUp, CheckCircle, Star, Play, Globe, MessageSquare, RefreshCw } from 'lucide-react';
+import { ArrowRight, Zap, Target, Bot, BarChart3, FolderSync as Sync, Shield, CheckCircle, Star, Play, MessageSquare, RefreshCw } from 'lucide-react';
 import { Footer } from '@/components/footer';
 
 export default function HomePage() {
@@ -364,8 +364,8 @@ export default function HomePage() {
                   <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
                 </div>
                 <p className="text-gray-600 mb-4">
-                  "Luframe increased our lead generation by 340% while reducing our ad spend by 25%. 
-                  The AI agent is like having a senior marketing manager working 24/7."
+                  &ldquo;Luframe increased our lead generation by 340% while reducing our ad spend by 25%. 
+                  The AI agent is like having a senior marketing manager working 24/7.&rdquo;
                 </p>
                 <div className="flex items-center">
                   <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center mr-3">
@@ -389,8 +389,8 @@ export default function HomePage() {
                   <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
                 </div>
                 <p className="text-gray-600 mb-4">
-                  "The multi-channel sync feature is a game-changer. What used to take our team 
-                  8 hours now takes 15 minutes. ROI improved by 180%."
+                  &ldquo;The multi-channel sync feature is a game-changer. What used to take our team 
+                  8 hours now takes 15 minutes. ROI improved by 180%.&rdquo;
                 </p>
                 <div className="flex items-center">
                   <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-blue-500 rounded-full flex items-center justify-center mr-3">
@@ -414,8 +414,8 @@ export default function HomePage() {
                   <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
                 </div>
                 <p className="text-gray-600 mb-4">
-                  "Lead recovery tools brought back 45% of our lost prospects. 
-                  It's like having a safety net for every marketing dollar we spend."
+                  &ldquo;Lead recovery tools brought back 45% of our lost prospects. 
+                  It&apos;s like having a safety net for every marketing dollar we spend.&rdquo;
                 </p>
                 <div className="flex items-center">
                   <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center mr-3">
@@ -439,7 +439,7 @@ export default function HomePage() {
             Ready to Transform Your Marketing?
           </h2>
           <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
-            Join thousands of marketers who've already revolutionized their campaigns with Luframe. 
+            Join thousands of marketers who&apos;ve already revolutionized their campaigns with Luframe. 
             Start your free trial today.
           </p>
           
