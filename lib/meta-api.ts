@@ -147,7 +147,19 @@ export const exchangeCodeForToken = async (code: string): Promise<{
     throw new Error(error.error?.message || 'Failed to exchange code for token');
   }
 
-  return response.json();
+  const data = await response.json();
+  console.log('Raw Facebook token response:', data);
+  
+  // Ensure expires_in is a number
+  const expires_in = typeof data.expires_in === 'string' 
+    ? parseInt(data.expires_in, 10) 
+    : data.expires_in;
+  
+  return {
+    access_token: data.access_token,
+    token_type: data.token_type || 'bearer',
+    expires_in: isNaN(expires_in) ? 3600 : expires_in // Default to 1 hour if invalid
+  };
 };
 
 // Get user's ad accounts
