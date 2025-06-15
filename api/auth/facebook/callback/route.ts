@@ -2,14 +2,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { exchangeCodeForToken, FACEBOOK_SCOPES } from '@/lib/meta-api';
 
-// Add dynamic runtime to handle searchParams properly
+// Use nodejs runtime for better compatibility with external APIs
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  // Quick test to see if route is accessible
+  const testMode = request.nextUrl.searchParams.get('test');
+  if (testMode === 'true') {
+    return NextResponse.json({ message: 'Facebook callback route is accessible', timestamp: new Date().toISOString() });
+  }
+
   try {
     console.log('Facebook OAuth callback received');
     console.log('Request URL:', request.url);
+    console.log('Environment:', process.env.NODE_ENV);
     
     // Get code from query string
     const searchParams = request.nextUrl.searchParams;
