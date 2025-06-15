@@ -24,6 +24,7 @@ export async function GET(request: NextRequest) {
       },
       message: 'API routes are working in production',
       environment: process.env.NODE_ENV,
+      callbackRouteStatus: 'should_work'
     });
   } catch (error) {
     console.error('Debug endpoint error:', error);
