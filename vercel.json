@@ -1,9 +1,4 @@
 {
-  "functions": {
-    "app/api/auth/facebook/callback/route.ts": {
-      "maxDuration": 30
-    }
-  },
   "crons": [
     {
       "path": "/api/cron/sync-facebook-metrics?key=${CRON_SECRET_KEY}",
