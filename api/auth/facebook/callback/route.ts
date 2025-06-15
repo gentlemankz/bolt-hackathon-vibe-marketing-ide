@@ -38,10 +38,16 @@ export async function GET(request: NextRequest) {
     // Exchange code for token
     const tokenData = await exchangeCodeForToken(code);
     console.log('Facebook token obtained with scopes:', FACEBOOK_SCOPES);
+    console.log('Token data:', { expires_in: tokenData.expires_in, type: typeof tokenData.expires_in });
     
-    // Calculate token expiration
+    // Calculate token expiration - handle invalid expires_in values
     const expiresAt = new Date();
-    expiresAt.setSeconds(expiresAt.getSeconds() + tokenData.expires_in);
+    const expiresInSeconds = typeof tokenData.expires_in === 'number' && tokenData.expires_in > 0 
+      ? tokenData.expires_in 
+      : 3600; // Default to 1 hour if invalid
+    
+    expiresAt.setSeconds(expiresAt.getSeconds() + expiresInSeconds);
+    console.log('Token will expire at:', expiresAt.toISOString());
 
     // Get user from session
     const supabase = await createClient();
