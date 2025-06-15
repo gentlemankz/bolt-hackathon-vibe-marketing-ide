@@ -10,6 +10,8 @@ export async function GET(request: NextRequest) {
   try {
     console.log('Facebook OAuth callback received');
     console.log('Request URL:', request.url);
+    console.log('User Agent:', request.headers.get('user-agent'));
+    console.log('Referer:', request.headers.get('referer'));
     
     // Get code from query string
     const searchParams = request.nextUrl.searchParams;
@@ -20,9 +22,12 @@ export async function GET(request: NextRequest) {
 
     console.log('OAuth parameters:', { code: code ? 'present' : 'missing', error, error_reason });
 
-    // Redirect URL for success or error
-    const redirectUrl = new URL('/facebook/select-adaccount', request.url);
-    const errorUrl = new URL('/dashboard', request.url);
+    // Construct redirect URLs with the correct origin
+    const baseUrl = new URL(request.url).origin;
+    console.log('Base URL:', baseUrl);
+    
+    const redirectUrl = new URL('/facebook/select-adaccount', baseUrl);
+    const errorUrl = new URL('/dashboard', baseUrl);
     errorUrl.searchParams.set('error', 'facebook_auth_failed');
 
     // Handle errors
@@ -35,10 +40,19 @@ export async function GET(request: NextRequest) {
     }
 
     console.log('Exchanging code for token...');
-    // Exchange code for token
-    const tokenData = await exchangeCodeForToken(code);
-    console.log('Facebook token obtained with scopes:', FACEBOOK_SCOPES);
-    console.log('Token data:', { expires_in: tokenData.expires_in, type: typeof tokenData.expires_in });
+    
+    // Exchange code for token with error handling
+    let tokenData;
+    try {
+      tokenData = await exchangeCodeForToken(code);
+      console.log('Facebook token obtained with scopes:', FACEBOOK_SCOPES);
+      console.log('Token data:', { expires_in: tokenData.expires_in, type: typeof tokenData.expires_in });
+    } catch (tokenError) {
+      console.error('Error exchanging code for token:', tokenError);
+      errorUrl.searchParams.set('error', 'token_exchange_failed');
+      errorUrl.searchParams.set('error_description', 'Failed to exchange code for access token');
+      return NextResponse.redirect(errorUrl);
+    }
     
     // Calculate token expiration - handle invalid expires_in values
     const expiresAt = new Date();
@@ -50,11 +64,12 @@ export async function GET(request: NextRequest) {
     console.log('Token will expire at:', expiresAt.toISOString());
 
     // Get user from session
+    console.log('Getting user from session...');
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    if (!user) {
-      console.error('No authenticated user found when storing Facebook token');
+    if (!user || userError) {
+      console.error('No authenticated user found when storing Facebook token:', userError);
       errorUrl.searchParams.set('error', 'no_user');
       errorUrl.searchParams.set('error_description', 'Please sign in first');
       return NextResponse.redirect(errorUrl);
@@ -93,20 +108,27 @@ export async function GET(request: NextRequest) {
     }
 
     console.log('Storing token in database...');
-    // Store token in database
-    const { error: insertError } = await supabase
-      .from('facebook_tokens')
-      .insert({
-        user_id: user.id,
-        access_token: tokenData.access_token,
-        expires_at: expiresAt.toISOString(),
-        has_ad_permissions: hasRequiredPermissions
-      });
+    // Store token in database with better error handling
+    try {
+      const { error: insertError } = await supabase
+        .from('facebook_tokens')
+        .insert({
+          user_id: user.id,
+          access_token: tokenData.access_token,
+          expires_at: expiresAt.toISOString(),
+          has_ad_permissions: hasRequiredPermissions
+        });
 
-    if (insertError) {
-      console.error('Error storing Facebook token:', insertError);
-      errorUrl.searchParams.set('error', 'token_storage_failed');
-      errorUrl.searchParams.set('error_description', 'Failed to save Facebook connection');
+      if (insertError) {
+        console.error('Error storing Facebook token:', insertError);
+        errorUrl.searchParams.set('error', 'token_storage_failed');
+        errorUrl.searchParams.set('error_description', 'Failed to save Facebook connection');
+        return NextResponse.redirect(errorUrl);
+      }
+    } catch (dbError) {
+      console.error('Database error storing Facebook token:', dbError);
+      errorUrl.searchParams.set('error', 'database_error');
+      errorUrl.searchParams.set('error_description', 'Database connection failed');
       return NextResponse.redirect(errorUrl);
     }
 
@@ -128,7 +150,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   } catch (error) {
     console.error('Unexpected error in Facebook callback:', error);
-    const errorUrl = new URL('/dashboard', request.url);
+    const baseUrl = new URL(request.url).origin;
+    const errorUrl = new URL('/dashboard', baseUrl);
     errorUrl.searchParams.set('error', 'unexpected_error');
     errorUrl.searchParams.set('error_description', 'An unexpected error occurred during Facebook authentication');
     return NextResponse.redirect(errorUrl);
