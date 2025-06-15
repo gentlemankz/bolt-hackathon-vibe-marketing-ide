@@ -2,8 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { exchangeCodeForToken, FACEBOOK_SCOPES } from '@/lib/meta-api';
 
+// Add dynamic runtime to handle searchParams properly
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
+    console.log('Facebook OAuth callback received');
+    console.log('Request URL:', request.url);
+    
     // Get code from query string
     const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get('code');
@@ -11,17 +18,23 @@ export async function GET(request: NextRequest) {
     const error_reason = searchParams.get('error_reason');
     const error_description = searchParams.get('error_description');
 
+    console.log('OAuth parameters:', { code: code ? 'present' : 'missing', error, error_reason });
+
     // Redirect URL for success or error
     const redirectUrl = new URL('/facebook/select-adaccount', request.url);
-    const errorUrl = new URL('/', request.url);
+    const errorUrl = new URL('/dashboard', request.url);
     errorUrl.searchParams.set('error', 'facebook_auth_failed');
 
     // Handle errors
     if (error || !code) {
       console.error('Facebook auth error:', error, error_reason, error_description);
+      if (error_description) {
+        errorUrl.searchParams.set('error_description', error_description);
+      }
       return NextResponse.redirect(errorUrl);
     }
 
+    console.log('Exchanging code for token...');
     // Exchange code for token
     const tokenData = await exchangeCodeForToken(code);
     console.log('Facebook token obtained with scopes:', FACEBOOK_SCOPES);
@@ -37,8 +50,11 @@ export async function GET(request: NextRequest) {
     if (!user) {
       console.error('No authenticated user found when storing Facebook token');
       errorUrl.searchParams.set('error', 'no_user');
+      errorUrl.searchParams.set('error_description', 'Please sign in first');
       return NextResponse.redirect(errorUrl);
     }
+
+    console.log('Verifying token permissions for user:', user.id);
 
     // Verify the token has ads_read and ads_management permissions
     let hasRequiredPermissions = false;
@@ -70,6 +86,7 @@ export async function GET(request: NextRequest) {
       // We'll continue and store the token anyway
     }
 
+    console.log('Storing token in database...');
     // Store token in database
     const { error: insertError } = await supabase
       .from('facebook_tokens')
@@ -83,6 +100,7 @@ export async function GET(request: NextRequest) {
     if (insertError) {
       console.error('Error storing Facebook token:', insertError);
       errorUrl.searchParams.set('error', 'token_storage_failed');
+      errorUrl.searchParams.set('error_description', 'Failed to save Facebook connection');
       return NextResponse.redirect(errorUrl);
     }
 
@@ -97,11 +115,16 @@ export async function GET(request: NextRequest) {
       redirectUrl.searchParams.set('warning_description', 'Limited ad access permissions detected. Some features may not work.');
     }
 
+    // Add success message
+    redirectUrl.searchParams.set('success', 'facebook_connected');
+    
+    console.log('Redirecting to:', redirectUrl.toString());
     return NextResponse.redirect(redirectUrl);
   } catch (error) {
     console.error('Unexpected error in Facebook callback:', error);
-    const errorUrl = new URL('/', request.url);
+    const errorUrl = new URL('/dashboard', request.url);
     errorUrl.searchParams.set('error', 'unexpected_error');
+    errorUrl.searchParams.set('error_description', 'An unexpected error occurred during Facebook authentication');
     return NextResponse.redirect(errorUrl);
   }
 } 
