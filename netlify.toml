@@ -1,0 +1,71 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[images]
+remote_images = [
+  "^(?:https:\\/\\/cdn\\.replica\\.tavus\\.io(?:\\/(?!\\.)(?:(?:(?!(?:^|\\/)\\.).)*?)|$))$",
+  "^(?:https:\\/\\/tavus-assets\\.s3\\.amazonaws\\.com(?:\\/(?!\\.)(?:(?:(?!(?:^|\\/)\\.).)*?)|$))$",
+  "^(?:https:\\/\\/example\\.com(?:\\/(?!\\.)(?:(?:(?!(?:^|\\/)\\.).)*?)|$))$"
+]
+
+[[headers]]
+for = "/_next/static/*"
+
+  [headers.values]
+  Cache-Control = "public, max-age=31536000, immutable"
+
+[[redirects]]
+from = "/_next/image"
+to = "/.netlify/images?url=:url&w=:width&q=:quality"
+status = 200
+
+  [redirects.query]
+  url = ":url"
+  w = ":width"
+  q = ":quality"
+
+[[redirects]]
+from = "/_ipx/*"
+to = "/.netlify/images?url=:url&w=:width&q=:quality"
+status = 200
+
+  [redirects.query]
+  url = ":url"
+  w = ":width"
+  q = ":quality"
+
+[context]
+
+  [context.production]
+
+    [context.production.images]
+    remote_images = [
+      "^(?:https:\\/\\/cdn\\.replica\\.tavus\\.io(?:\\/(?!\\.)(?:(?:(?!(?:^|\\/)\\.).)*?)|$))$",
+      "^(?:https:\\/\\/tavus-assets\\.s3\\.amazonaws\\.com(?:\\/(?!\\.)(?:(?:(?!(?:^|\\/)\\.).)*?)|$))$",
+      "^(?:https:\\/\\/example\\.com(?:\\/(?!\\.)(?:(?:(?!(?:^|\\/)\\.).)*?)|$))$"
+    ]
+
+    [[context.production.headers]]
+    for = "/_next/static/*"
+
+      [context.production.headers.values]
+      Cache-Control = "public, max-age=31536000, immutable"
+
+  [context.main]
+
+    [context.main.images]
+    remote_images = [
+      "^(?:https:\\/\\/cdn\\.replica\\.tavus\\.io(?:\\/(?!\\.)(?:(?:(?!(?:^|\\/)\\.).)*?)|$))$",
+      "^(?:https:\\/\\/tavus-assets\\.s3\\.amazonaws\\.com(?:\\/(?!\\.)(?:(?:(?!(?:^|\\/)\\.).)*?)|$))$",
+      "^(?:https:\\/\\/example\\.com(?:\\/(?!\\.)(?:(?:(?!(?:^|\\/)\\.).)*?)|$))$"
+    ]
+
+    [[context.main.headers]]
+    for = "/_next/static/*"
+
+      [context.main.headers.values]
+      Cache-Control = "public, max-age=31536000, immutable"
